@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Результаты поиска{% endblock %}
+{% block header %}
+<div class="page-heading">
+  <p class="eyebrow">Google Books</p>
+  <h1>Результаты поиска</h1>
+  <p>Выберите нужное издание и добавьте его на свою книжную полку.</p>
+</div>
+{% endblock %}
+{% block content %}
+<p class="section-label">Запрос: <strong>«{{ search_text }}»</strong>{% if results %} · найдено {{ results|length }}{% endif %}</p>
+{% if results %}
+<section class="results-grid">
+  {% for book in results %}
+  <article class="book-card">
+    <div class="cover">
+      {% if book.cover_url %}<img src="{{ book.cover_url }}" alt="Обложка книги «{{ book.name }}»" loading="lazy">
+      {% else %}<div class="cover-placeholder">▤</div>{% endif %}
+      {% if book.year %}<span class="badge badge-left">{{ book.year }}</span>{% endif %}
+    </div>
+    <div class="book-body">
+      <h2 class="book-title">{{ book.name }}</h2>
+      <p class="book-author">{{ book.authors }}</p>
+      <p class="book-id">Google Books: {{ book.id }}</p>
+      <form action="{{ url_for('add_book_by_id') }}" method="POST">
+        <input type="hidden" name="book_id" value="{{ book.id }}">
+        <button class="button button-success button-small" type="submit">＋ Добавить книгу</button>
+      </form>
+    </div>
+  </article>
+  {% endfor %}
+</section>
+{% else %}
+<div class="panel empty"><span class="empty-icon">⌕</span>По запросу «{{ search_text }}» ничего не найдено. Попробуйте другое название или имя автора.</div>
+{% endif %}
+<div class="button-row">
+  <a class="button button-ghost" href="{{ url_for('add_book') }}">← Изменить запрос</a>
+  <a class="button button-primary" href="{{ url_for('books') }}">Вся коллекция</a>
+</div>
+{% endblock %}

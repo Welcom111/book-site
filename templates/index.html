@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Личная книжная полка{% endblock %}
+{% block header_class %}home-hero{% endblock %}
+{% block header %}
+<div class="home-grid">
+  <div class="page-heading">
+    <p class="eyebrow">Домашняя библиотека</p>
+    <h1>Истории, к которым хочется возвращаться</h1>
+    <p>Вся личная библиотека в одном месте: любимые книги, новые находки и быстрый выбор следующей истории.</p>
+    <div class="hero-actions">
+      <a class="button button-primary" href="{{ url_for('books') }}">Смотреть все книги →</a>
+      <a class="button button-ghost" href="{{ url_for('add_book') }}">＋ Добавить книгу</a>
+    </div>
+  </div>
+  <div class="showcase" aria-hidden="true">
+    <div class="show-book show-one">
+      <img src="{{ url_for('static', filename='images/Мара_и_Морок__Трилогия_4.jpg') }}" alt="">
+      <span>Мара и Морок</span>
+    </div>
+    <div class="show-book show-two">
+      <img src="{{ url_for('static', filename='images/Хороших_девочек_не_убивают_7.jpg') }}" alt="">
+      <span>Хороших девочек не убивают</span>
+    </div>
+    <div class="book-symbol">⌘</div>
+  </div>
+</div>
+{% endblock %}
+{% block main_class %}home-main{% endblock %}
+{% block content %}
+<section class="panel stats">
+  <div class="stat-main">
+    <p class="stat-label">В вашей библиотеке</p>
+    <p class="stat-number">{{ books_count }}</p>
+    <p class="stat-copy">книг — прочитанных, любимых и тех, чьи страницы ещё только предстоит открыть.</p>
+  </div>
+  <div class="quick">
+    <a href="{{ url_for('filter_books') }}"><span>⌕</span><strong>Подобрать книгу</strong><small>По автору или любимому жанру</small></a>
+    <a href="{{ url_for('export_excel') }}"><span>↓</span><strong>Скачать каталог</strong><small>Выгрузить всю библиотеку в Excel</small></a>
+  </div>
+</section>
+<section class="home-section">
+  <div class="section-head">
+    <h2>Всё важное — рядом</h2>
+    <p>Коллекция показывает главное с первого взгляда и помогает быстро найти подходящую книгу.</p>
+  </div>
+  <div class="feature-grid">
+    <article class="feature"><span class="feature-icon">✦</span><h3>Красивые обложки</h3><p>Книжная полка выглядит как настоящая коллекция, а не как сухая таблица.</p></article>
+    <article class="feature"><span class="feature-icon">⌕</span><h3>Быстрый выбор</h3><p>Фильтруйте библиотеку по авторам и жанрам, чтобы найти нужную историю.</p></article>
+    <article class="feature"><span class="feature-icon">★</span><h3>Любимое рядом</h3><p>Отделяйте избранные книги и возвращайтесь к ним в один клик.</p></article>
+  </div>
+</section>
+{% endblock %}

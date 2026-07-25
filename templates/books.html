@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Коллекция книг{% endblock %}
+{% block header %}
+<div class="page-heading">
+  <p class="eyebrow">Ваша библиотека</p>
+  <h1>Коллекция книг</h1>
+  <p>Ищите по названию и автору, открывайте любимое и выбирайте следующую книгу по настроению.</p>
+</div>
+{% endblock %}
+{% block content %}
+<div class="toolbar">
+  <input class="input" id="book-search" type="search" placeholder="Название, автор или жанр…" aria-label="Поиск по книгам">
+  <div class="filter-group" aria-label="Фильтр избранного">
+    <button class="filter-btn active" type="button" data-filter="all">Все книги</button>
+    <button class="filter-btn" type="button" data-filter="yes">★ Избранные</button>
+    <button class="filter-btn" type="button" data-filter="no">Остальные</button>
+  </div>
+  <a class="button button-primary button-small" href="{{ url_for('add_book') }}">＋ Добавить</a>
+</div>
+<p class="count-line">Показано книг: <strong id="filter-count">{{ books|length }}</strong></p>
+<section class="books-grid" id="books-grid">
+  {% for book in books %}
+    {% set is_favorite = book.favorite and book.favorite|lower in ['да', 'yes', 'true', '1', '⭐'] %}
+    <article class="book-card" data-favorite="{{ 'yes' if is_favorite else 'no' }}" data-search="{{ book.name }} {{ book.author }} {{ book.categories }}">
+      <div class="cover">
+        {% if book.image_path %}<img src="{{ url_for('static', filename=book.image_path) }}" alt="Обложка книги «{{ book.name }}»" loading="lazy">
+        {% else %}<div class="cover-placeholder">▤</div>{% endif %}
+        {% if book.rating %}<span class="badge badge-left">★ {{ book.rating }}</span>{% endif %}
+        {% if is_favorite %}<span class="badge badge-right">★ Любимое</span>{% endif %}
+      </div>
+      <div class="book-body">
+        <h2 class="book-title">{{ book.name }}</h2>
+        <p class="book-author">{{ book.author or 'Автор не указан' }}</p>
+        <div class="facts">
+          <span class="fact">{{ book.year or '—' }} год</span>
+          <span class="fact">{{ book.pages or '—' }} стр.</span>
+        </div>
+        {% if book.categories %}
+        <div class="tags">
+          {% for category in book.categories.split(';')[:3] %}<span class="tag">{{ category.strip() }}</span>{% endfor %}
+        </div>
+        {% endif %}
+        <p class="book-id">Google Books: {{ book.id }}</p>
+      </div>
+    </article>
+  {% endfor %}
+</section>
+<div class="empty" id="books-empty" hidden><span class="empty-icon">⌕</span>По этому запросу книг не найдено.</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const cards = [...document.querySelectorAll('.book-card')];
+  const search = document.getElementById('book-search');
+  const buttons = [...document.querySelectorAll('[data-filter]')];
+  const count = document.getElementById('filter-count');
+  const empty = document.getElementById('books-empty');
+  let favorite = 'all';
+  const apply = () => {
+    const query = search.value.trim().toLocaleLowerCase('ru');
+    let visible = 0;
+    cards.forEach(card => {
+      const matchesText = card.dataset.search.toLocaleLowerCase('ru').includes(query);
+      const matchesFavorite = favorite === 'all' || card.dataset.favorite === favorite;
+      const show = matchesText && matchesFavorite;
+      card.classList.toggle('hidden', !show);
+      if (show) visible++;
+    });
+    count.textContent = visible;
+    empty.hidden = visible !== 0;
+  };
+  search.addEventListener('input', apply);
+  buttons.forEach(button => button.addEventListener('click', () => {
+    favorite = button.dataset.filter;
+    buttons.forEach(item => item.classList.toggle('active', item === button));
+    apply();
+  }));
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Результаты подбора{% endblock %}
+{% block header %}
+<div class="page-heading">
+  <p class="eyebrow">Результаты подбора</p>
+  <h1>Нашли на вашей полке</h1>
+  <p>Книги, которые соответствуют выбранному условию.</p>
+</div>
+{% endblock %}
+{% block main_class %}narrow{% endblock %}
+{% block content %}
+<section class="panel">
+  <p class="section-label">Фильтр: <strong>{{ filter_text }}</strong></p>
+  {% if games %}
+  <p class="panel-copy">Найдено книг: {{ games|length }}</p>
+  <ul class="list">
+    {% for book in games %}<li class="list-item"><span class="list-icon">▤</span><span>{{ book }}</span></li>{% endfor %}
+  </ul>
+  {% else %}
+  <div class="empty"><span class="empty-icon">⌕</span>Подходящих книг не найдено. Попробуйте выбрать другой фильтр.</div>
+  {% endif %}
+  <div class="button-row">
+    <a class="button button-ghost" href="{{ url_for('filter_books') }}">← Новый поиск</a>
+    <a class="button button-primary" href="{{ url_for('books') }}">Вся коллекция</a>
+  </div>
+</section>
+{% endblock %}

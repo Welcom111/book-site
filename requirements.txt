@@ -1,0 +1,5 @@
+Flask
+requests
+openpyxl
+urllib3
+Pillow

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Добавить книгу{% endblock %}
+{% block header %}
+<div class="page-heading">
+  <p class="eyebrow">Пополнить библиотеку</p>
+  <h1>Добавить новую книгу</h1>
+  <p>Найдите книгу по названию или вставьте точный идентификатор Google Books.</p>
+</div>
+{% endblock %}
+{% block content %}
+<div class="choice-grid">
+  <section class="panel">
+    <span class="choice-icon">⌕</span>
+    <h2 class="panel-title">Поиск по названию</h2>
+    <p class="panel-copy">Удобный способ найти нужное издание и посмотреть варианты обложек.</p>
+    <form class="form-grid" action="{{ url_for('search_books') }}" method="POST">
+      <div class="field">
+        <label for="book_name">Название или автор</label>
+        <input class="input" id="book_name" name="book_name" type="text" placeholder="Например, Мастер и Маргарита" required autofocus>
+        <p class="hint">Можно ввести название целиком или несколько ключевых слов.</p>
+      </div>
+      <button class="button button-primary" type="submit">Найти книгу →</button>
+    </form>
+  </section>
+  <section class="panel">
+    <span class="choice-icon">#</span>
+    <h2 class="panel-title">Добавить по ID</h2>
+    <p class="panel-copy">Если идентификатор Google Books уже известен, добавьте книгу напрямую.</p>
+    <form class="form-grid" action="{{ url_for('add_book_by_id') }}" method="POST">
+      <div class="field">
+        <label for="book_id">Google Books ID</label>
+        <input class="input" id="book_id" name="book_id" type="text" placeholder="Например, zyTCAlFPjgYC" required>
+        <p class="hint">ID находится в адресе страницы книги после сегмента /books/edition/.</p>
+      </div>
+      <button class="button button-success" type="submit">＋ Добавить в библиотеку</button>
+    </form>
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Книги по жанру{% endblock %}
+{% block header %}
+<div class="page-heading">
+  <p class="eyebrow">Фильтр по жанру</p>
+  <h1>Какое сегодня настроение?</h1>
+  <p>Выберите жанр или категорию и найдите подходящую книгу на своей полке.</p>
+</div>
+{% endblock %}
+{% block main_class %}narrow{% endblock %}
+{% block content %}
+<section class="panel">
+  {% if categories %}
+  <form class="form-grid" method="POST">
+    <div class="field">
+      <label for="category">Жанр или категория</label>
+      <select class="select" name="category" id="category" required>
+        <option value="">Выберите жанр…</option>
+        {% for category in categories %}<option value="{{ category }}">{{ category }}</option>{% endfor %}
+      </select>
+      <p class="hint">Категории собраны из данных Google Books.</p>
+    </div>
+    <button class="button button-primary" type="submit">Показать книги →</button>
+  </form>
+  {% else %}
+  <div class="empty"><span class="empty-icon">◇</span>В коллекции пока нет книг с указанными жанрами.</div>
+  {% endif %}
+  <div class="button-row"><a class="button button-ghost" href="{{ url_for('filter_books') }}">← Другой фильтр</a></div>
+</section>
+{% endblock %}

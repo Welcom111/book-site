@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Подобрать книгу{% endblock %}
+{% block header %}
+<div class="page-heading">
+  <p class="eyebrow">Навигация по коллекции</p>
+  <h1>Как будем искать?</h1>
+  <p>Выберите удобный способ и найдите книгу по любимому автору или жанру.</p>
+</div>
+{% endblock %}
+{% block content %}
+<div class="choice-grid">
+  <a class="choice" href="{{ url_for('filter_by_author') }}">
+    <span class="choice-icon">✎</span>
+    <h2>По автору</h2>
+    <p>Посмотрите все книги выбранного автора, которые уже есть на вашей полке.</p>
+  </a>
+  <a class="choice" href="{{ url_for('filter_by_category') }}">
+    <span class="choice-icon">◇</span>
+    <h2>По жанру</h2>
+    <p>Выберите настроение: фантастика, детектив, роман или другая категория.</p>
+  </a>
+</div>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Книги по автору{% endblock %}
+{% block header %}
+<div class="page-heading">
+  <p class="eyebrow">Фильтр по автору</p>
+  <h1>Чьи истории читаем?</h1>
+  <p>Выберите автора — покажем все его книги, которые есть в вашей коллекции.</p>
+</div>
+{% endblock %}
+{% block main_class %}narrow{% endblock %}
+{% block content %}
+<section class="panel">
+  {% if authors %}
+  <form class="form-grid" method="POST">
+    <div class="field">
+      <label for="author">Автор</label>
+      <select class="select" name="author" id="author" required>
+        <option value="">Выберите автора…</option>
+        {% for author in authors %}<option value="{{ author }}">{{ author }}</option>{% endfor %}
+      </select>
+      <p class="hint">В коллекции найдено авторов: {{ authors|length }}</p>
+    </div>
+    <button class="button button-primary" type="submit">Показать книги →</button>
+  </form>
+  {% else %}
+  <div class="empty"><span class="empty-icon">✎</span>В коллекции пока нет книг с указанными авторами.</div>
+  {% endif %}
+  <div class="button-row"><a class="button button-ghost" href="{{ url_for('filter_books') }}">← Другой фильтр</a></div>
+</section>
+{% endblock %}
