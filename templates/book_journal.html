@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Дневник — {{ book.name }}{% endblock %}
+{% block header %}
+<div class="page-heading journal-heading">
+  <p class="eyebrow">Читательский дневник</p>
+  <h1>{{ book.name }}</h1>
+  <p>Заполните впечатления о книге. Все изменения сохраняются в books.xlsx.</p>
+</div>
+{% endblock %}
+{% block content %}
+<form class="journal-sheet" method="POST">
+  <div class="journal-top">
+    <section class="journal-cover-panel">
+      <div class="journal-cover">
+        {% if book.image_path %}
+        <img src="{{ url_for('static', filename=book.image_path) }}" alt="Обложка книги «{{ book.name }}»">
+        {% else %}
+        <span>▤</span>
+        <small>Обложка книги</small>
+        {% endif %}
+      </div>
+      <fieldset class="rating-fieldset">
+        <legend>Моя оценка</legend>
+        <div class="star-rating" aria-label="Оценка книги от 1 до 5">
+          {% for score in range(5, 0, -1) %}
+          <input type="radio" id="rating-{{ score }}" name="journal_rating" value="{{ score }}" {% if book.journal_rating|int == score %}checked{% endif %}>
+          <label for="rating-{{ score }}" title="{{ score }} из 5">★</label>
+          {% endfor %}
+        </div>
+      </fieldset>
+    </section>
+
+    <section class="journal-details">
+      <div class="journal-field">
+        <label for="name">Название книги</label>
+        <input id="name" name="name" value="{{ book.name or '' }}" required>
+      </div>
+      <div class="journal-field">
+        <label for="author">Автор</label>
+        <input id="author" name="author" value="{{ book.author or '' }}">
+      </div>
+      <div class="journal-field">
+        <label for="categories">Жанр</label>
+        <input id="categories" name="categories" value="{{ book.categories or '' }}">
+      </div>
+      <div class="journal-field">
+        <label for="pages">Количество страниц</label>
+        <input id="pages" name="pages" type="number" min="0" value="{{ book.pages or '' }}">
+      </div>
+      <div class="date-grid">
+        <div class="journal-field">
+          <label for="date_started">Начала читать</label>
+          <input id="date_started" name="date_started" type="date" value="{{ book.date_started }}">
+        </div>
+        <div class="journal-field">
+          <label for="date_finished">Закончила</label>
+          <input id="date_finished" name="date_finished" type="date" value="{{ book.date_finished }}">
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="journal-middle">
+    <section class="journal-section">
+      <div class="ornament-title"><span>Мои эмоции</span></div>
+      <div class="emotion-list">
+        {% set emotions = [
+          ('romance', '♡', 'Романтично'),
+          ('friendship', '♧', 'Дружба'),
+          ('humor', '☀', 'Юмор'),
+          ('heartbreak', '♢', 'Стекло'),
+          ('plot', '▤', 'Сюжет'),
+          ('chemistry', '♨', 'Химия и напряжение')
+        ] %}
+        {% for field, icon, label in emotions %}
+        <div class="emotion-row">
+          <span class="emotion-icon">{{ icon }}</span>
+          <label for="{{ field }}">{{ label }}</label>
+          <input id="{{ field }}" name="{{ field }}" type="range" min="0" max="5" value="{{ book[field] or 0 }}" oninput="this.nextElementSibling.value = this.value">
+          <output>{{ book[field] or 0 }}</output><span>/ 5</span>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="journal-section tropes-section">
+      <div class="ornament-title"><span>Популярные тропы</span></div>
+      <p class="journal-help">Запишите каждый троп с новой строки.</p>
+      <textarea name="tropes" rows="12" placeholder="slow burn&#10;от ненависти до любви&#10;фиктивные отношения">{{ book.tropes or '' }}</textarea>
+    </section>
+  </div>
+
+  <section class="journal-section thoughts-section">
+    <div class="ornament-title"><span>Мои мысли</span></div>
+    <textarea name="thoughts" rows="9" placeholder="Любимые моменты, цитаты и впечатления…">{{ book.thoughts or '' }}</textarea>
+  </section>
+
+  <div class="journal-actions">
+    <a class="button button-ghost" href="{{ url_for('books') }}">← К коллекции</a>
+    <button class="button button-primary" type="submit">Сохранить дневник</button>
+  </div>
+</form>
+{% endblock %}

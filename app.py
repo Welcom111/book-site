@@ -1,17 +1,52 @@
-from flask import Flask, render_template, request, redirect, url_for, session, send_file, flash
+from flask import Flask, render_template, request, redirect, url_for, session, send_file, flash, jsonify
 from flask import send_from_directory
 import requests
 import xml.etree.ElementTree as ET
 from openpyxl.drawing.image import Image as XLImage
 import openpyxl
+from datetime import date, datetime
 import re
 import os
 from openpyxl import Workbook
 import urllib.request
 import json
+from threading import Lock
 from local_config import ADD_BOOK_PASSWORD, API_KEY, SECRET_KEY
 
 EXCEL_FILE = "books.xlsx"
+EXCEL_LOCK = Lock()
+
+JOURNAL_COLUMNS = {
+    'name': 1,
+    'author': 3,
+    'pages': 5,
+    'categories': 7,
+    'date_started': 11,
+    'date_finished': 12,
+    'journal_rating': 13,
+    'romance': 14,
+    'friendship': 15,
+    'humor': 16,
+    'heartbreak': 17,
+    'plot': 18,
+    'chemistry': 19,
+    'thoughts': 20,
+    'tropes': 21,
+}
+
+JOURNAL_HEADERS = [
+    'Дата начала прочтения',
+    'Дата окончания прочтения',
+    'Рейтинг',
+    'Романтично',
+    'Дружба',
+    'Юмор',
+    'Стекло',
+    'Сюжет',
+    'Химия и напряжение',
+    'Мои мысли',
+    'Популярные тропы',
+]
 
 app = Flask(__name__)
 
@@ -28,7 +63,7 @@ def init_excel():
         wb = Workbook()
         sheet = wb.active
         sheet.append(['Название книги', 'ID в Google Books', 'Автор(ы)', 'Год издания', 
-                      'Количество страниц', 'Рейтинг', 'Жанры/Категории', 'Добавил пользователь', 'Картинка', 'Избранное'])
+                      'Количество страниц', 'Рейтинг', 'Жанры/Категории', 'Добавил пользователь', 'Картинка', 'Избранное'] + JOURNAL_HEADERS)
         sheet.row_dimensions[1].height = 100
         sheet.column_dimensions['J'].width = 15
         wb.save(EXCEL_FILE)
@@ -160,11 +195,12 @@ def books():
                 image_filename = f'images/{safe_name}_{row_idx}.jpg'
             else:
                 # Запасной вариант — glob на случай расхождений
-                matching_files = glob.glob(f'static/images/{safe_name}_*.jpg')
+                matching_files = glob.glob(f'static/images/*_{row_idx}.jpg')
                 if matching_files:
                     image_filename = matching_files[0].replace('static/', '').replace('\\', '/')
             
             books_list.append({
+                'row_index': row_idx,
                 'name': name,
                 'id': book_id,
                 'author': author,
@@ -178,6 +214,91 @@ def books():
             })
     
     return render_template('books.html', books=books_list)
+
+def format_excel_date(value):
+    if isinstance(value, (date, datetime)):
+        return value.strftime('%Y-%m-%d')
+    if value:
+        return str(value)
+    return ''
+
+def parse_form_date(value):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, '%Y-%m-%d').date()
+    except ValueError:
+        return None
+
+def parse_score(value):
+    if value in (None, ''):
+        return None
+    try:
+        score = int(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0, min(5, score))
+
+def parse_non_negative_int(value):
+    if value in (None, ''):
+        return None
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return None
+
+@app.route('/books/<int:row_index>', methods=['GET', 'POST'])
+def book_journal(row_index):
+    with EXCEL_LOCK:
+        workbook = openpyxl.load_workbook(EXCEL_FILE)
+        sheet = workbook.active
+
+        if row_index < 2 or row_index > sheet.max_row or not sheet.cell(row=row_index, column=1).value:
+            workbook.close()
+            flash('Книга не найдена', 'error')
+            return redirect(url_for('books'))
+
+        if request.method == 'POST':
+            sheet.cell(row=row_index, column=JOURNAL_COLUMNS['name'], value=request.form.get('name', '').strip())
+            sheet.cell(row=row_index, column=JOURNAL_COLUMNS['author'], value=request.form.get('author', '').strip())
+            sheet.cell(row=row_index, column=JOURNAL_COLUMNS['pages'], value=parse_non_negative_int(request.form.get('pages')))
+            sheet.cell(row=row_index, column=JOURNAL_COLUMNS['categories'], value=request.form.get('categories', '').strip())
+            sheet.cell(row=row_index, column=JOURNAL_COLUMNS['date_started'], value=parse_form_date(request.form.get('date_started')))
+            sheet.cell(row=row_index, column=JOURNAL_COLUMNS['date_finished'], value=parse_form_date(request.form.get('date_finished')))
+
+            for field in ('journal_rating', 'romance', 'friendship', 'humor', 'heartbreak', 'plot', 'chemistry'):
+                sheet.cell(row=row_index, column=JOURNAL_COLUMNS[field], value=parse_score(request.form.get(field)))
+
+            sheet.cell(row=row_index, column=JOURNAL_COLUMNS['thoughts'], value=request.form.get('thoughts', '').strip())
+            sheet.cell(row=row_index, column=JOURNAL_COLUMNS['tropes'], value=request.form.get('tropes', '').strip())
+
+            workbook.save(EXCEL_FILE)
+            workbook.close()
+            flash('Дневник книги сохранён', 'success')
+            return redirect(url_for('book_journal', row_index=row_index))
+
+        journal = {
+            field: sheet.cell(row=row_index, column=column).value
+            for field, column in JOURNAL_COLUMNS.items()
+        }
+        journal['date_started'] = format_excel_date(journal['date_started'])
+        journal['date_finished'] = format_excel_date(journal['date_finished'])
+        journal['image_path'] = None
+
+        safe_name = re.sub(r'[\\/*?:"<>|\.]', '_', str(journal['name']))
+        safe_name = re.sub(r'\s+', '_', safe_name)[:50]
+        image_pattern = f'static/images/{safe_name}_{row_index}.jpg'
+        if os.path.exists(image_pattern):
+            journal['image_path'] = image_pattern.replace('static/', '').replace('\\', '/')
+        else:
+            import glob
+            matching_files = glob.glob(f'static/images/*_{row_index}.jpg')
+            if matching_files:
+                journal['image_path'] = matching_files[0].replace('static/', '').replace('\\', '/')
+
+        workbook.close()
+
+    return render_template('book_journal.html', book=journal, row_index=row_index)
 
 @app.route('/export_excel')
 def export_excel():

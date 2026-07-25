@@ -21,7 +21,7 @@
 <section class="books-grid" id="books-grid">
   {% for book in books %}
     {% set is_favorite = book.favorite and book.favorite|lower in ['да', 'yes', 'true', '1', '⭐'] %}
-    <article class="book-card" data-favorite="{{ 'yes' if is_favorite else 'no' }}" data-search="{{ book.name }} {{ book.author }} {{ book.categories }}">
+    <a class="book-card book-card-link" href="{{ url_for('book_journal', row_index=book.row_index) }}" data-favorite="{{ 'yes' if is_favorite else 'no' }}" data-search="{{ book.name }} {{ book.author }} {{ book.categories }}" aria-label="Открыть дневник книги «{{ book.name }}»">
       <div class="cover">
         {% if book.image_path %}<img src="{{ url_for('static', filename=book.image_path) }}" alt="Обложка книги «{{ book.name }}»" loading="lazy">
         {% else %}<div class="cover-placeholder">▤</div>{% endif %}
@@ -42,7 +42,8 @@
         {% endif %}
         <p class="book-id">Google Books: {{ book.id }}</p>
       </div>
-    </article>
+      <span class="open-journal">Открыть читательский дневник →</span>
+    </a>
   {% endfor %}
 </section>
 <div class="empty" id="books-empty" hidden><span class="empty-icon">⌕</span>По этому запросу книг не найдено.</div>
