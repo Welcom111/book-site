@@ -70,7 +70,23 @@ def init_excel():
 
 init_excel()
 
-def download_and_insert_image(sheet, row_num, image_url, book_name):
+def make_cover_filename(book_name, book_id, extension='jpg'):
+    """Формирует единое имя обложки: название_книги_ID.расширение."""
+    safe_name = re.sub(r'[\\/*?:"<>|\.]', '_', str(book_name or ''))
+    safe_name = re.sub(r'\s+', '_', safe_name)
+    safe_id = re.sub(r'[\\/*?:"<>|\.\s]', '_', str(book_id or ''))
+    return f'{safe_name}_{safe_id}.{extension}'
+
+def find_cover_image(book_name, book_id):
+    """Возвращает web-путь обложки, имя которой соответствует книге и её ID."""
+    for extension in ('jpg', 'jpeg', 'png', 'webp'):
+        filename = make_cover_filename(book_name, book_id, extension)
+        image_path = os.path.join('static', 'images', filename)
+        if os.path.exists(image_path):
+            return f'images/{filename}'
+    return None
+
+def download_and_insert_image(sheet, row_num, image_url, book_name, book_id):
     """Скачивает картинку обложки и вставляет в Excel"""
     try:
         from PIL import Image as PILImage
@@ -80,12 +96,7 @@ def download_and_insert_image(sheet, row_num, image_url, book_name):
         if not os.path.exists(static_img_dir):
             os.makedirs(static_img_dir)
         
-        safe_name = re.sub(r'[\\/*?:"<>|\.]', '_', book_name)
-        safe_name = re.sub(r'\s+', '_', safe_name)
-        if len(safe_name) > 50:
-            safe_name = safe_name[:50]
-        
-        img_filename = f'{safe_name}_{row_num}.jpg'
+        img_filename = make_cover_filename(book_name, book_id)
         img_path = os.path.join(static_img_dir, img_filename)
         
         session_req = requests.Session()
@@ -154,8 +165,26 @@ def get_all_authors():
 def index():
     workbook = openpyxl.load_workbook(EXCEL_FILE)
     sheet = workbook.active
-    books_count = sum(1 for row in sheet.iter_rows(min_row=2, values_only=True) if row[0])
-    return render_template('index.html', books_count=books_count)
+    books_count = 0
+    featured_books = []
+
+    for row in sheet.iter_rows(min_row=2, values_only=True):
+        name = row[0]
+        if not name:
+            continue
+
+        books_count += 1
+        book_id = row[1]
+        image_path = find_cover_image(name, book_id)
+        if image_path and len(featured_books) < 2:
+            featured_books.append({
+                'name': name,
+                'id': book_id,
+                'image_path': image_path,
+            })
+
+    workbook.close()
+    return render_template('index.html', books_count=books_count, featured_books=featured_books)
 
 @app.route('/static/<path:filename>')
 def static_files(filename):
@@ -166,8 +195,6 @@ def books():
     workbook = openpyxl.load_workbook(EXCEL_FILE)
     sheet = workbook.active
     books_list = []
-    import glob
-    
     for row_idx in range(2, sheet.max_row + 1):
         name = sheet.cell(row=row_idx, column=1).value
         if name:
@@ -180,24 +207,7 @@ def books():
             added_by = sheet.cell(row=row_idx, column=8).value
             favorite = sheet.cell(row=row_idx, column=10).value
             
-            image_filename = None
-            
-            safe_name = re.sub(r'[\\/*?:"<>|\.]', '_', name)
-            safe_name = re.sub(r'\s+', '_', safe_name)
-            if len(safe_name) > 50:
-                safe_name = safe_name[:50]
-            
-            # Ищем по паттерну с номером строки
-            image_pattern = f'static/images/{safe_name}_{row_idx}.jpg'
-            
-            if os.path.exists(image_pattern):
-                # ✅ Путь для url_for — только то, что после 'static/'
-                image_filename = f'images/{safe_name}_{row_idx}.jpg'
-            else:
-                # Запасной вариант — glob на случай расхождений
-                matching_files = glob.glob(f'static/images/*_{row_idx}.jpg')
-                if matching_files:
-                    image_filename = matching_files[0].replace('static/', '').replace('\\', '/')
+            image_filename = find_cover_image(name, book_id)
             
             books_list.append({
                 'row_index': row_idx,
@@ -247,13 +257,40 @@ def parse_non_negative_int(value):
     except (TypeError, ValueError):
         return None
 
-@app.route('/books/<int:row_index>', methods=['GET', 'POST'])
-def book_journal(row_index):
+@app.route('/books/<book_id>', methods=['GET', 'POST'])
+def book_journal(book_id):
+    if not session.get('password_ok'):
+        if request.method == 'POST':
+            password = request.form.get('password')
+            if password == ADD_BOOK_PASSWORD:
+                session['password_ok'] = True
+                flash('Пароль верный! Дневник книги открыт', 'success')
+                return redirect(url_for('book_journal', book_id=book_id))
+
+            flash('Неверный пароль!', 'error')
+
+        return render_template(
+            'password_check.html',
+            access_title='Доступ к читательскому дневнику',
+            access_heading='Открыть читательский дневник',
+            access_intro='Введите пароль владельца, чтобы просматривать и редактировать записи о книге.',
+            access_copy='После подтверждения откроется читательский дневник выбранной книги.',
+        )
+
     with EXCEL_LOCK:
         workbook = openpyxl.load_workbook(EXCEL_FILE)
         sheet = workbook.active
 
-        if row_index < 2 or row_index > sheet.max_row or not sheet.cell(row=row_index, column=1).value:
+        row_index = next(
+            (
+                row
+                for row in range(2, sheet.max_row + 1)
+                if str(sheet.cell(row=row, column=2).value or '') == str(book_id)
+            ),
+            None,
+        )
+
+        if row_index is None:
             workbook.close()
             flash('Книга не найдена', 'error')
             return redirect(url_for('books'))
@@ -275,7 +312,7 @@ def book_journal(row_index):
             workbook.save(EXCEL_FILE)
             workbook.close()
             flash('Дневник книги сохранён', 'success')
-            return redirect(url_for('book_journal', row_index=row_index))
+            return redirect(url_for('books'))
 
         journal = {
             field: sheet.cell(row=row_index, column=column).value
@@ -283,22 +320,11 @@ def book_journal(row_index):
         }
         journal['date_started'] = format_excel_date(journal['date_started'])
         journal['date_finished'] = format_excel_date(journal['date_finished'])
-        journal['image_path'] = None
-
-        safe_name = re.sub(r'[\\/*?:"<>|\.]', '_', str(journal['name']))
-        safe_name = re.sub(r'\s+', '_', safe_name)[:50]
-        image_pattern = f'static/images/{safe_name}_{row_index}.jpg'
-        if os.path.exists(image_pattern):
-            journal['image_path'] = image_pattern.replace('static/', '').replace('\\', '/')
-        else:
-            import glob
-            matching_files = glob.glob(f'static/images/*_{row_index}.jpg')
-            if matching_files:
-                journal['image_path'] = matching_files[0].replace('static/', '').replace('\\', '/')
+        journal['image_path'] = find_cover_image(journal['name'], book_id)
 
         workbook.close()
 
-    return render_template('book_journal.html', book=journal, row_index=row_index)
+    return render_template('book_journal.html', book=journal, book_id=book_id)
 
 @app.route('/export_excel')
 def export_excel():
@@ -434,7 +460,7 @@ def add_book_by_id():
             # Добавляем картинку если есть
             if image_url:
                 try:
-                    download_and_insert_image(sheet, next_row, image_url, title)
+                    download_and_insert_image(sheet, next_row, image_url, title, book_id)
                 except Exception as img_error:
                     print(f"Ошибка картинки: {img_error}")
                     # Продолжаем, даже если картинка не добавилась

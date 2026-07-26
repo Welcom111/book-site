@@ -12,15 +12,13 @@
       <a class="button button-ghost" href="{{ url_for('add_book') }}">＋ Добавить книгу</a>
     </div>
   </div>
-  <div class="showcase" aria-hidden="true">
-    <div class="show-book show-one">
-      <img src="{{ url_for('static', filename='images/Мара_и_Морок__Трилогия_4.jpg') }}" alt="">
-      <span>Мара и Морок</span>
-    </div>
-    <div class="show-book show-two">
-      <img src="{{ url_for('static', filename='images/Хороших_девочек_не_убивают_7.jpg') }}" alt="">
-      <span>Хороших девочек не убивают</span>
-    </div>
+  <div class="showcase">
+    {% for book in featured_books %}
+    <a class="show-book {{ 'show-one' if loop.index == 1 else 'show-two' }}" href="{{ url_for('book_journal', book_id=book.id) }}">
+      <img src="{{ url_for('static', filename=book.image_path) }}" alt="Обложка книги «{{ book.name }}»">
+      <span>{{ book.name }}</span>
+    </a>
+    {% endfor %}
     <div class="book-symbol">⌘</div>
   </div>
 </div>

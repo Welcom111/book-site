@@ -21,7 +21,7 @@
 <section class="books-grid" id="books-grid">
   {% for book in books %}
     {% set is_favorite = book.favorite and book.favorite|lower in ['да', 'yes', 'true', '1', '⭐'] %}
-    <a class="book-card book-card-link" href="{{ url_for('book_journal', row_index=book.row_index) }}" data-favorite="{{ 'yes' if is_favorite else 'no' }}" data-search="{{ book.name }} {{ book.author }} {{ book.categories }}" aria-label="Открыть дневник книги «{{ book.name }}»">
+    <a class="book-card book-card-link" href="{{ url_for('book_journal', book_id=book.id) }}" data-favorite="{{ 'yes' if is_favorite else 'no' }}" data-search="{{ book.name }} {{ book.author }} {{ book.categories }}" aria-label="Открыть дневник книги «{{ book.name }}»">
       <div class="cover">
         {% if book.image_path %}<img src="{{ url_for('static', filename=book.image_path) }}" alt="Обложка книги «{{ book.name }}»" loading="lazy">
         {% else %}<div class="cover-placeholder">▤</div>{% endif %}
