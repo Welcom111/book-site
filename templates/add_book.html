@@ -4,7 +4,7 @@
 <div class="page-heading">
   <p class="eyebrow">Пополнить библиотеку</p>
   <h1>Добавить новую книгу</h1>
-  <p>Найдите книгу по названию или вставьте точный идентификатор Google Books.</p>
+  <p>Найдите книгу в Google Books, вставьте ID или добавьте запись вручную.</p>
 </div>
 {% endblock %}
 {% block content %}
@@ -23,6 +23,23 @@
     </form>
   </section>
   <section class="panel">
+    <span class="choice-icon">✎</span>
+    <h2 class="panel-title">Добавить вручную</h2>
+    <p class="panel-copy">Подходит для книг, которых нет в Google Books. Обложку можно добавить сразу или позже.</p>
+    <form class="form-grid" action="{{ url_for('add_book_manual') }}" method="POST" enctype="multipart/form-data">
+      <div class="field">
+        <label for="manual_title">Название книги</label>
+        <input class="input" id="manual_title" name="manual_title" type="text" placeholder="Например, Моя любимая книга" required>
+      </div>
+      <div class="field">
+        <label for="manual_cover">Обложка <span class="optional">необязательно</span></label>
+        <input class="input file-input" id="manual_cover" name="manual_cover" type="file" accept="image/jpeg,image/png,image/webp" disabled>
+        <p class="hint">Сначала укажите название. Допустимы JPG, PNG и WebP, до 8 МБ.</p>
+      </div>
+      <button class="button button-success" type="submit">＋ Добавить книгу</button>
+    </form>
+  </section>
+  <section class="panel">
     <span class="choice-icon">#</span>
     <h2 class="panel-title">Добавить по ID</h2>
     <p class="panel-copy">Если идентификатор Google Books уже известен, добавьте книгу напрямую.</p>
@@ -36,4 +53,15 @@
     </form>
   </section>
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const title = document.getElementById('manual_title');
+  const cover = document.getElementById('manual_cover');
+  const updateCoverState = () => { cover.disabled = !title.value.trim(); };
+  title.addEventListener('input', updateCoverState);
+  updateCoverState();
+})();
+</script>
 {% endblock %}

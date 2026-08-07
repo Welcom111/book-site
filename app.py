@@ -5,8 +5,10 @@ import xml.etree.ElementTree as ET
 from openpyxl.drawing.image import Image as XLImage
 import openpyxl
 from datetime import date, datetime
+import hashlib
 import re
 import os
+import secrets
 from openpyxl import Workbook
 import urllib.request
 import json
@@ -51,6 +53,7 @@ JOURNAL_HEADERS = [
 app = Flask(__name__)
 
 app.secret_key = SECRET_KEY
+app.config['MAX_CONTENT_LENGTH'] = 8 * 1024 * 1024
 
 GOOGLE_BOOKS_API = "https://www.googleapis.com/books/v1/volumes" 
 
@@ -85,6 +88,48 @@ def find_cover_image(book_name, book_id):
         if os.path.exists(image_path):
             return f'images/{filename}'
     return None
+
+def make_manual_book_id(book_name):
+    """Создаёт URL-безопасный уникальный ID для книги, добавленной вручную."""
+    normalized_name = re.sub(r'\s+', ' ', book_name.strip()).casefold()
+    name_hash = hashlib.sha256(normalized_name.encode('utf-8')).hexdigest()[:8]
+    return f'manual-{name_hash}-{secrets.token_hex(3)}'
+
+def save_uploaded_cover(uploaded_file, book_name, book_id):
+    """Проверяет пользовательскую обложку и сохраняет её в общем формате JPEG."""
+    if not uploaded_file or not uploaded_file.filename:
+        return None
+
+    extension = uploaded_file.filename.rsplit('.', 1)[-1].lower() if '.' in uploaded_file.filename else ''
+    if extension not in {'jpg', 'jpeg', 'png', 'webp'}:
+        raise ValueError('Допустимы только изображения JPG, PNG или WebP')
+
+    from PIL import Image as PILImage
+    from PIL import ImageOps
+
+    try:
+        image = PILImage.open(uploaded_file.stream)
+        image.verify()
+        uploaded_file.stream.seek(0)
+        image = PILImage.open(uploaded_file.stream)
+        image = ImageOps.exif_transpose(image)
+    except Exception as error:
+        raise ValueError('Не удалось прочитать загруженную обложку') from error
+
+    if image.mode in ('RGBA', 'P', 'LA'):
+        background = PILImage.new('RGB', image.size, (255, 255, 255))
+        if image.mode == 'P':
+            image = image.convert('RGBA')
+        background.paste(image, mask=image.getchannel('A') if image.mode in ('RGBA', 'LA') else None)
+        image = background
+    elif image.mode != 'RGB':
+        image = image.convert('RGB')
+
+    static_img_dir = 'static/images'
+    os.makedirs(static_img_dir, exist_ok=True)
+    filename = make_cover_filename(book_name, book_id)
+    image.save(os.path.join(static_img_dir, filename), 'JPEG', quality=95, optimize=True)
+    return f'images/{filename}'
 
 def download_and_insert_image(sheet, row_num, image_url, book_name, book_id):
     """Скачивает картинку обложки и вставляет в Excel"""
@@ -350,6 +395,65 @@ def add_book():
             return render_template('password_check.html')
     
     return render_template('password_check.html')
+
+@app.route('/add_book_manual', methods=['POST'])
+def add_book_manual():
+    if not session.get('password_ok'):
+        flash('Сначала подтвердите пароль владельца', 'error')
+        return redirect(url_for('add_book'))
+
+    title = request.form.get('manual_title', '').strip()
+    cover = request.files.get('manual_cover')
+    if not title:
+        flash('Укажите название книги', 'error')
+        return redirect(url_for('add_book'))
+
+    cover_path = None
+    workbook = None
+    try:
+        with EXCEL_LOCK:
+            workbook = openpyxl.load_workbook(EXCEL_FILE)
+            sheet = workbook.active
+
+            existing_ids = {
+                str(sheet.cell(row=row, column=2).value or '')
+                for row in range(2, sheet.max_row + 1)
+            }
+            book_id = make_manual_book_id(title)
+            while book_id in existing_ids:
+                book_id = make_manual_book_id(title)
+
+            if cover and cover.filename:
+                cover_path = save_uploaded_cover(cover, title, book_id)
+
+            next_row = sheet.max_row + 1
+            sheet.cell(row=next_row, column=1, value=title)
+            sheet.cell(row=next_row, column=2, value=book_id)
+            sheet.cell(row=next_row, column=3, value='')
+            sheet.cell(row=next_row, column=4, value='')
+            sheet.cell(row=next_row, column=5, value='')
+            sheet.cell(row=next_row, column=6, value='')
+            sheet.cell(row=next_row, column=7, value='')
+            sheet.cell(row=next_row, column=8, value='web_user')
+            sheet.cell(row=next_row, column=9, value=cover_path or '')
+            sheet.cell(row=next_row, column=10, value='')
+            workbook.save(EXCEL_FILE)
+
+        flash(f"Книга '{title}' успешно добавлена!", 'success')
+        return redirect(url_for('books'))
+    except ValueError as error:
+        flash(str(error), 'error')
+    except Exception as error:
+        flash(f'Не удалось добавить книгу: {error}', 'error')
+    finally:
+        if workbook is not None:
+            workbook.close()
+
+    if cover_path:
+        cover_file = os.path.join('static', cover_path)
+        if os.path.exists(cover_file):
+            os.remove(cover_file)
+    return redirect(url_for('add_book'))
 
 @app.route('/search_books', methods=['POST'])
 def search_books():
