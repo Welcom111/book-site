@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Регистрация' if mode == 'register' else 'Вход' }}{% endblock %}
+{% block header %}
+<div class="page-heading">
+  <p class="eyebrow">Личная библиотека</p>
+  <h1>{{ 'Создать аккаунт' if mode == 'register' else 'Войти' }}</h1>
+  <p>{{ 'Выберите логин: он станет названием вашего листа с книгами.' if mode == 'register' else 'Введите данные своего аккаунта, чтобы открыть библиотеку.' }}</p>
+</div>
+{% endblock %}
+{% block main_class %}narrow{% endblock %}
+{% block content %}
+<section class="panel">
+  <form class="form-grid" method="POST">
+    <div class="field">
+      <label for="login">Логин</label>
+      <input class="input" id="login" name="login" type="text" minlength="3" maxlength="24" required autofocus>
+      {% if mode == 'register' %}<p class="hint">От 3 до 24 символов: буквы, цифры, дефис или подчёркивание.</p>{% endif %}
+    </div>
+    <div class="field">
+      <label for="password">Пароль</label>
+      <input class="input" id="password" name="password" type="password" minlength="6" autocomplete="{{ 'new-password' if mode == 'register' else 'current-password' }}" required>
+    </div>
+    {% if mode == 'register' %}
+    <div class="field">
+      <label for="password_repeat">Повторите пароль</label>
+      <input class="input" id="password_repeat" name="password_repeat" type="password" minlength="6" autocomplete="new-password" required>
+    </div>
+    {% endif %}
+    <button class="button button-primary" type="submit">{{ 'Создать библиотеку' if mode == 'register' else 'Войти в библиотеку' }}</button>
+  </form>
+  <div class="button-row">
+    {% if mode == 'register' %}<a class="button button-ghost" href="{{ url_for('login') }}">Уже есть аккаунт</a>{% else %}<a class="button button-ghost" href="{{ url_for('register') }}">Зарегистрироваться</a>{% endif %}
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Книжная полка{% endblock %}
+{% block header_class %}home-hero{% endblock %}
+{% block header %}
+<div class="landing-hero">
+  <div class="page-heading">
+    <p class="eyebrow">Личная библиотека</p>
+    <h1>Ваши истории — на своей полке</h1>
+    <p>Храните книги, читательские дневники и впечатления в личной библиотеке. При желании откройте её другим читателям.</p>
+    <div class="hero-actions">
+      <a class="button button-primary" href="{{ url_for('login') }}">Войти</a>
+      <a class="button button-ghost" href="{{ url_for('register') }}">Зарегистрироваться</a>
+      <a class="button button-ghost" href="{{ url_for('public_libraries') }}">Смотреть публичные библиотеки</a>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block content %}
+<section class="panel landing-panel">
+  <h2 class="panel-title">Ваша библиотека — только ваша</h2>
+  <p class="panel-copy">У каждого аккаунта отдельная коллекция книг. Доступ к добавлению книг и читательскому дневнику появляется сразу после входа.</p>
+</section>
+{% endblock %}

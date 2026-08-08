@@ -14,11 +14,21 @@
   <header class="site-header {% block header_class %}{% endblock %}">
     <div class="shell">
       <div class="topbar">
-        <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">▤</span><span>Личная книжная полка</span></a>
+        <a class="brand" href="{{ url_for('home') if current_login else url_for('index') }}"><span class="brand-mark">▤</span><span>Личная книжная полка</span></a>
         <nav class="nav" aria-label="Основная навигация">
+          {% if current_login %}
           <a href="{{ url_for('books') }}">Все книги</a>
           <a href="{{ url_for('filter_books') }}">Подобрать</a>
           <a href="{{ url_for('add_book') }}">Добавить книгу</a>
+          <a class="profile-link" href="{{ url_for('settings') }}">
+            {% if current_avatar %}<img src="{{ url_for('static', filename=current_avatar) }}" alt="">{% else %}<span class="profile-initial">{{ current_login[0]|upper }}</span>{% endif %}
+            {{ current_login }}
+          </a>
+          {% else %}
+          <a href="{{ url_for('login') }}">Войти</a>
+          <a href="{{ url_for('register') }}">Регистрация</a>
+          <a href="{{ url_for('public_libraries') }}">Публичные библиотеки</a>
+          {% endif %}
         </nav>
       </div>
       {% with messages = get_flashed_messages(with_categories=true) %}

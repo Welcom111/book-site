@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Публичные библиотеки{% endblock %}
+{% block header %}
+<div class="page-heading">
+  <p class="eyebrow">Открытые коллекции</p>
+  <h1>Публичные библиотеки</h1>
+  <p>Здесь собраны коллекции пользователей, которые решили открыть свои книжные полки.</p>
+</div>
+{% endblock %}
+{% block content %}
+{% if libraries %}
+<section class="public-libraries">
+  {% for library in libraries %}
+  <a class="public-library" href="{{ url_for('public_library', login=library.login) }}">
+    {% if library.avatar %}<img src="{{ url_for('static', filename=library.avatar) }}" alt="">{% else %}<span>{{ library.login[0]|upper }}</span>{% endif %}
+    <strong>{{ library.login }}</strong><small>Открыть библиотеку →</small>
+  </a>
+  {% endfor %}
+</section>
+{% else %}<div class="empty"><span class="empty-icon">◇</span>Пока нет открытых библиотек.</div>{% endif %}
+{% endblock %}

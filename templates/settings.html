@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Настройки — {{ account.login }}{% endblock %}
+{% block header %}
+<div class="page-heading">
+  <p class="eyebrow">Аккаунт</p>
+  <h1>Настройки {{ account.login }}</h1>
+  <p>Управляйте профилем, паролем и видимостью своей библиотеки.</p>
+</div>
+{% endblock %}
+{% block main_class %}narrow{% endblock %}
+{% block content %}
+<section class="panel">
+  <form class="form-grid" method="POST" enctype="multipart/form-data">
+    <div class="profile-settings-head">
+      {% if account.avatar %}<img src="{{ url_for('static', filename=account.avatar) }}" alt="Аватар {{ account.login }}">{% else %}<span>{{ account.login[0]|upper }}</span>{% endif %}
+      <div><h2 class="panel-title">{{ account.login }}</h2><p class="panel-copy">Логин также является названием листа с вашей библиотекой.</p></div>
+    </div>
+    <div class="field">
+      <label for="avatar">Аватар <span class="optional">необязательно</span></label>
+      <input class="input file-input" id="avatar" name="avatar" type="file" accept="image/jpeg,image/png,image/webp">
+    </div>
+    <div class="field">
+      <label for="new_password">Новый пароль <span class="optional">оставьте пустым, чтобы не менять</span></label>
+      <input class="input" id="new_password" name="new_password" type="password" minlength="6" autocomplete="new-password">
+    </div>
+    <div class="field">
+      <label for="password_repeat">Повторите новый пароль</label>
+      <input class="input" id="password_repeat" name="password_repeat" type="password" minlength="6" autocomplete="new-password">
+    </div>
+    <label class="toggle-field" for="is_public">
+      <input id="is_public" name="is_public" type="checkbox" {% if account.is_public %}checked{% endif %}>
+      <span><strong>Публичная библиотека</strong><small>Другие пользователи смогут просматривать список ваших книг.</small></span>
+    </label>
+    <button class="button button-primary" type="submit">Сохранить настройки</button>
+  </form>
+  <form class="button-row" action="{{ url_for('logout') }}" method="POST"><button class="button button-ghost" type="submit">Выйти из аккаунта</button></form>
+</section>
+{% endblock %}

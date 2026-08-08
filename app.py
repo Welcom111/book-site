@@ -1,103 +1,175 @@
 from flask import Flask, render_template, request, redirect, url_for, session, send_file, flash, jsonify
 from flask import send_from_directory
-import requests
-import xml.etree.ElementTree as ET
-from openpyxl.drawing.image import Image as XLImage
-import openpyxl
+from functools import wraps
 from datetime import date, datetime
-import hashlib
-import re
-import os
-import secrets
+from io import BytesIO
 from openpyxl import Workbook
-import urllib.request
+from openpyxl.drawing.image import Image as XLImage
+import hashlib
 import json
+import os
+from pathlib import Path
+import pprint
+import re
+import secrets
 from threading import Lock
-from local_config import ADD_BOOK_PASSWORD, API_KEY, SECRET_KEY
 
-EXCEL_FILE = "books.xlsx"
+import openpyxl
+import requests
+from werkzeug.security import check_password_hash, generate_password_hash
+
+from local_config import ACCOUNTS, API_KEY, SECRET_KEY
+
+EXCEL_FILE = 'books.xlsx'
+ACCOUNTS_SHEET = '__accounts__'
 EXCEL_LOCK = Lock()
-
-JOURNAL_COLUMNS = {
-    'name': 1,
-    'author': 3,
-    'pages': 5,
-    'categories': 7,
-    'date_started': 11,
-    'date_finished': 12,
-    'journal_rating': 13,
-    'romance': 14,
-    'friendship': 15,
-    'humor': 16,
-    'heartbreak': 17,
-    'plot': 18,
-    'chemistry': 19,
-    'thoughts': 20,
-    'tropes': 21,
-}
-
-JOURNAL_HEADERS = [
-    'Дата начала прочтения',
-    'Дата окончания прочтения',
-    'Рейтинг',
-    'Романтично',
-    'Дружба',
-    'Юмор',
-    'Стекло',
-    'Сюжет',
-    'Химия и напряжение',
-    'Мои мысли',
+LOGIN_RE = re.compile(r'^[A-Za-zА-Яа-яЁё0-9_-]{3,24}$')
+BOOK_HEADERS = [
+    'Название', 'id', 'Автор', 'Год', 'Страниц', 'Рейтинг', 'Жанры',
+    'Добавил', 'Картинка', 'Избранное', 'Дата начала прочтения',
+    'Дата окончания прочтения', 'Рейтинг', 'Романтично', 'Дружба',
+    'Юмор', 'Стекло', 'Сюжет', 'Химия и напряжение', 'Мои мысли',
     'Популярные тропы',
 ]
+ACCOUNT_HEADERS = ['Логин', 'Аватар', 'Публичная библиотека']
+JOURNAL_COLUMNS = {
+    'name': 1, 'author': 3, 'pages': 5, 'categories': 7,
+    'date_started': 11, 'date_finished': 12, 'journal_rating': 13,
+    'romance': 14, 'friendship': 15, 'humor': 16, 'heartbreak': 17,
+    'plot': 18, 'chemistry': 19, 'thoughts': 20, 'tropes': 21,
+}
 
 app = Flask(__name__)
-
 app.secret_key = SECRET_KEY
 app.config['MAX_CONTENT_LENGTH'] = 8 * 1024 * 1024
 
-GOOGLE_BOOKS_API = "https://www.googleapis.com/books/v1/volumes" 
-
-@app.route('/favicon.ico')
-def favicon():
-    return send_from_directory('static', 'favicon.ico')
 
 def init_excel():
-    if not os.path.exists(EXCEL_FILE):
-        wb = Workbook()
-        sheet = wb.active
-        sheet.append(['Название книги', 'ID в Google Books', 'Автор(ы)', 'Год издания', 
-                      'Количество страниц', 'Рейтинг', 'Жанры/Категории', 'Добавил пользователь', 'Картинка', 'Избранное'] + JOURNAL_HEADERS)
-        sheet.row_dimensions[1].height = 100
-        sheet.column_dimensions['J'].width = 15
-        wb.save(EXCEL_FILE)
+    if os.path.exists(EXCEL_FILE):
+        return
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = 'library'
+    sheet.append(BOOK_HEADERS)
+    workbook.save(EXCEL_FILE)
+
 
 init_excel()
 
+
+def ensure_accounts_sheet(workbook):
+    if ACCOUNTS_SHEET not in workbook.sheetnames:
+        sheet = workbook.create_sheet(ACCOUNTS_SHEET)
+        sheet.append(ACCOUNT_HEADERS)
+        sheet.sheet_state = 'hidden'
+    sheet = workbook[ACCOUNTS_SHEET]
+    if [sheet.cell(row=1, column=column).value for column in range(1, 5)] == ['Логин', 'Хеш пароля', 'Аватар', 'Публичная библиотека']:
+        profiles = [(row[0], row[2], row[3]) for row in sheet.iter_rows(min_row=2, values_only=True) if row[0]]
+        sheet.delete_rows(1, sheet.max_row)
+        sheet.append(ACCOUNT_HEADERS)
+        for profile in profiles:
+            sheet.append(profile)
+    return sheet
+
+
+def find_account(workbook, login):
+    if ACCOUNTS_SHEET not in workbook.sheetnames:
+        return None
+    for row in workbook[ACCOUNTS_SHEET].iter_rows(min_row=2, values_only=True):
+        if row[0] and str(row[0]).casefold() == login.casefold():
+            return {
+                'login': str(row[0]),
+                'avatar': row[1] or '',
+                'is_public': str(row[2]).lower() in ('1', 'true', 'да', 'yes'),
+            }
+    return None
+
+
+def configured_login(login):
+    return next((item for item in ACCOUNTS if item.casefold() == login.casefold()), None)
+
+
+def verify_account_password(login, password):
+    """Checks a password stored as a Werkzeug password hash."""
+    stored_password = ACCOUNTS.get(login, '')
+    return check_password_hash(stored_password, password)
+
+
+def persist_accounts():
+    config_path = Path(__file__).with_name('local_config.py')
+    content = config_path.read_text(encoding='utf-8')
+    account_block = '# Accounts managed by app\nACCOUNTS = ' + pprint.pformat(ACCOUNTS, sort_dicts=True, width=100) + '\n# End managed accounts'
+    updated, replacements = re.subn(
+        r'(?s)# Accounts managed by app\nACCOUNTS = .*?\n# End managed accounts',
+        account_block,
+        content,
+    )
+    if replacements != 1:
+        raise RuntimeError('Не найден блок ACCOUNTS в local_config.py')
+    config_path.write_text(updated, encoding='utf-8')
+
+
+def migrate_legacy_passwords():
+    """Converts pre-existing clear-text passwords to hashes on startup."""
+    changed = False
+    for login, stored_password in list(ACCOUNTS.items()):
+        if not stored_password.startswith(('scrypt:', 'pbkdf2:')):
+            ACCOUNTS[login] = generate_password_hash(stored_password)
+            changed = True
+    if changed:
+        persist_accounts()
+
+
+migrate_legacy_passwords()
+
+
+def account_sheet(workbook, login):
+    account = find_account(workbook, login)
+    if not account or account['login'] not in workbook.sheetnames:
+        return None
+    return workbook[account['login']]
+
+
+def require_login(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not session.get('login'):
+            flash('Войдите в аккаунт, чтобы открыть свою библиотеку', 'error')
+            return redirect(url_for('login'))
+        return view(*args, **kwargs)
+    return wrapped
+
+
+@app.context_processor
+def inject_current_user():
+    return {
+        'current_login': session.get('login'),
+        'current_avatar': session.get('avatar', ''),
+    }
+
+
 def make_cover_filename(book_id, extension='jpg'):
-    """Формирует стабильное имя обложки только по ID книги."""
-    safe_id = re.sub(r'[\\/*?:"<>|\.\s]', '_', str(book_id or ''))
+    safe_id = re.sub(r'[\\/*?:"<>|.\s]', '_', str(book_id or ''))
     return f'{safe_id}.{extension}'
 
+
 def find_cover_image(book_id):
-    """Возвращает web-путь обложки, имя которой соответствует ID книги."""
     for extension in ('jpg', 'jpeg', 'png', 'webp'):
         filename = make_cover_filename(book_id, extension)
-        image_path = os.path.join('static', 'images', filename)
-        if os.path.exists(image_path):
+        if os.path.exists(os.path.join('static', 'images', filename)):
             return f'images/{filename}'
     return None
 
+
 def make_manual_book_id(book_name):
-    """Создаёт URL-безопасный уникальный ID для книги, добавленной вручную."""
     normalized_name = re.sub(r'\s+', ' ', book_name.strip()).casefold()
     name_hash = hashlib.sha256(normalized_name.encode('utf-8')).hexdigest()[:8]
     return f'manual-{name_hash}-{secrets.token_hex(3)}'
 
-def save_uploaded_cover(uploaded_file, book_id):
-    """Проверяет пользовательскую обложку и сохраняет её в общем формате JPEG."""
+
+def image_to_jpeg(uploaded_file, output_path):
     if not uploaded_file or not uploaded_file.filename:
         return None
-
     extension = uploaded_file.filename.rsplit('.', 1)[-1].lower() if '.' in uploaded_file.filename else ''
     if extension not in {'jpg', 'jpeg', 'png', 'webp'}:
         raise ValueError('Допустимы только изображения JPG, PNG или WebP')
@@ -109,10 +181,9 @@ def save_uploaded_cover(uploaded_file, book_id):
         image = PILImage.open(uploaded_file.stream)
         image.verify()
         uploaded_file.stream.seek(0)
-        image = PILImage.open(uploaded_file.stream)
-        image = ImageOps.exif_transpose(image)
+        image = ImageOps.exif_transpose(PILImage.open(uploaded_file.stream))
     except Exception as error:
-        raise ValueError('Не удалось прочитать загруженную обложку') from error
+        raise ValueError('Не удалось прочитать загруженное изображение') from error
 
     if image.mode in ('RGBA', 'P', 'LA'):
         background = PILImage.new('RGB', image.size, (255, 255, 255))
@@ -122,158 +193,83 @@ def save_uploaded_cover(uploaded_file, book_id):
         image = background
     elif image.mode != 'RGB':
         image = image.convert('RGB')
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    image.save(output_path, 'JPEG', quality=95, optimize=True)
 
-    static_img_dir = 'static/images'
-    os.makedirs(static_img_dir, exist_ok=True)
+
+def save_uploaded_cover(uploaded_file, book_id):
     filename = make_cover_filename(book_id)
-    image.save(os.path.join(static_img_dir, filename), 'JPEG', quality=95, optimize=True)
+    image_to_jpeg(uploaded_file, os.path.join('static', 'images', filename))
     return f'images/{filename}'
 
-def download_and_insert_image(sheet, row_num, image_url, book_id):
-    """Скачивает картинку обложки и вставляет в Excel"""
-    try:
-        from PIL import Image as PILImage
-        import io
 
-        static_img_dir = 'static/images'
-        if not os.path.exists(static_img_dir):
-            os.makedirs(static_img_dir)
-        
-        img_filename = make_cover_filename(book_id)
-        img_path = os.path.join(static_img_dir, img_filename)
-        
-        session_req = requests.Session()
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        
-        response = session_req.get(image_url, headers=headers, timeout=(10, 60))
+def save_uploaded_avatar(uploaded_file, login):
+    safe_login = re.sub(r'[^A-Za-zА-Яа-яЁё0-9_-]', '_', login)
+    filename = f'avatar_{safe_login}.jpg'
+    image_to_jpeg(uploaded_file, os.path.join('static', 'avatars', filename))
+    return f'avatars/{filename}'
+
+
+def download_and_insert_image(sheet, row_num, image_url, book_id):
+    try:
+        import io
+        from PIL import Image as PILImage
+
+        response = requests.get(image_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=(10, 60))
         response.raise_for_status()
-        
-        img_pil = PILImage.open(io.BytesIO(response.content))
-        
-        if img_pil.mode in ('RGBA', 'P', 'LA'):
-            background = PILImage.new('RGB', img_pil.size, (255, 255, 255))
-            if img_pil.mode == 'P':
-                img_pil = img_pil.convert('RGBA')
-            background.paste(
-                img_pil, 
-                mask=img_pil.split()[-1] if img_pil.mode in ('RGBA', 'LA') else None
-            )
-            img_pil = background
-        elif img_pil.mode != 'RGB':
-            img_pil = img_pil.convert('RGB')
-        
-        img_pil.save(img_path, 'JPEG', quality=95, optimize=True)
-        
-        xl_img = XLImage(img_path)
-        xl_img.width = 60
-        xl_img.height = 80
-        sheet.add_image(xl_img, f'I{row_num}')
+        image = PILImage.open(io.BytesIO(response.content)).convert('RGB')
+        filename = make_cover_filename(book_id)
+        path = os.path.join('static', 'images', filename)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        image.save(path, 'JPEG', quality=95, optimize=True)
+        excel_image = XLImage(path)
+        excel_image.width, excel_image.height = 60, 80
+        sheet.add_image(excel_image, f'I{row_num}')
         sheet.row_dimensions[row_num].height = 90
         sheet.column_dimensions['I'].width = 12
-        
-        return f'images/{img_filename}'
-        
-    except Exception as e:
-        print(f"Ошибка при загрузке обложки: {e}")
+        return f'images/{filename}'
+    except Exception as error:
+        print(f'Ошибка при загрузке обложки: {error}')
         return None
 
-def get_all_categories():
-    workbook = openpyxl.load_workbook(EXCEL_FILE)
-    sheet = workbook.active
-    categories = set()
-    for row in sheet.iter_rows(min_row=2, max_col=7, values_only=True):
-        if row[6]:
-            for category in row[6].split("; "):
-                if category and category.strip():
-                    categories.add(category.strip())
-    return sorted(list(categories))
-    
-def get_all_authors():
-    """Собирает всех уникальных авторов из Excel файла"""
-    workbook = openpyxl.load_workbook(EXCEL_FILE)
-    sheet = workbook.active
-    authors = set()
-    for row in sheet.iter_rows(min_row=2, max_col=3, values_only=True):
-        if row[2]:  # колонка 3 (столбец C) - авторы
-            # Разделяем, если несколько авторов через запятую
-            for author in str(row[2]).split(','):
-                author = author.strip()
-                if author and author != 'Автор не указан':
-                    authors.add(author)
-    return sorted(list(authors))
 
-@app.route('/')
-def index():
-    workbook = openpyxl.load_workbook(EXCEL_FILE)
-    sheet = workbook.active
-    books_count = 0
-    featured_books = []
-
-    for row in sheet.iter_rows(min_row=2, values_only=True):
-        name = row[0]
+def books_from_sheet(sheet):
+    result = []
+    for row_index in range(2, sheet.max_row + 1):
+        name = sheet.cell(row=row_index, column=1).value
         if not name:
             continue
+        book_id = sheet.cell(row=row_index, column=2).value
+        result.append({
+            'row_index': row_index,
+            'name': name,
+            'id': book_id,
+            'author': sheet.cell(row=row_index, column=3).value,
+            'year': sheet.cell(row=row_index, column=4).value,
+            'pages': sheet.cell(row=row_index, column=5).value,
+            'rating': sheet.cell(row=row_index, column=6).value,
+            'categories': sheet.cell(row=row_index, column=7).value,
+            'favorite': str(sheet.cell(row=row_index, column=10).value or ''),
+            'image_path': find_cover_image(book_id),
+        })
+    return result
 
-        books_count += 1
-        book_id = row[1]
-        image_path = find_cover_image(book_id)
-        if image_path and len(featured_books) < 2:
-            featured_books.append({
-                'name': name,
-                'id': book_id,
-                'image_path': image_path,
-            })
 
-    workbook.close()
-    return render_template('index.html', books_count=books_count, featured_books=featured_books)
-
-@app.route('/static/<path:filename>')
-def static_files(filename):
-    return send_from_directory('static', filename)
-
-@app.route('/books')
-def books():
+def get_current_library():
     workbook = openpyxl.load_workbook(EXCEL_FILE)
-    sheet = workbook.active
-    books_list = []
-    for row_idx in range(2, sheet.max_row + 1):
-        name = sheet.cell(row=row_idx, column=1).value
-        if name:
-            book_id = sheet.cell(row=row_idx, column=2).value
-            author = sheet.cell(row=row_idx, column=3).value
-            year = sheet.cell(row=row_idx, column=4).value
-            pages = sheet.cell(row=row_idx, column=5).value
-            rating = sheet.cell(row=row_idx, column=6).value
-            categories = sheet.cell(row=row_idx, column=7).value
-            added_by = sheet.cell(row=row_idx, column=8).value
-            favorite = sheet.cell(row=row_idx, column=10).value
-            
-            image_filename = find_cover_image(book_id)
-            
-            books_list.append({
-                'row_index': row_idx,
-                'name': name,
-                'id': book_id,
-                'author': author,
-                'year': year,
-                'pages': pages,
-                'rating': rating,
-                'categories': categories,
-                'added_by': added_by,
-                'image_path': image_filename,
-                'favorite': str(favorite).strip() if favorite else ''
-            })
-    
-    return render_template('books.html', books=books_list)
+    sheet = account_sheet(workbook, session['login'])
+    if sheet is None:
+        workbook.close()
+        session.clear()
+        return None, None
+    return workbook, sheet
+
 
 def format_excel_date(value):
     if isinstance(value, (date, datetime)):
         return value.strftime('%Y-%m-%d')
-    if value:
-        return str(value)
-    return ''
+    return str(value) if value else ''
+
 
 def parse_form_date(value):
     if not value:
@@ -283,409 +279,437 @@ def parse_form_date(value):
     except ValueError:
         return None
 
+
 def parse_score(value):
-    if value in (None, ''):
-        return None
     try:
-        score = int(value)
+        return max(0, min(5, int(value))) if value not in (None, '') else None
     except (TypeError, ValueError):
         return None
-    return max(0, min(5, score))
+
 
 def parse_non_negative_int(value):
-    if value in (None, ''):
-        return None
     try:
-        return max(0, int(value))
+        return max(0, int(value)) if value not in (None, '') else None
     except (TypeError, ValueError):
         return None
 
+
+def categories_from_sheet(sheet):
+    categories = set()
+    for row in sheet.iter_rows(min_row=2, min_col=7, max_col=7, values_only=True):
+        if row[0]:
+            categories.update(item.strip() for item in str(row[0]).split(';') if item.strip())
+    return sorted(categories)
+
+
+def authors_from_sheet(sheet):
+    authors = set()
+    for row in sheet.iter_rows(min_row=2, min_col=3, max_col=3, values_only=True):
+        if row[0]:
+            authors.update(item.strip() for item in str(row[0]).split(',') if item.strip())
+    return sorted(authors)
+
+
+@app.route('/favicon.ico')
+def favicon():
+    return send_from_directory('static', 'favicon.ico')
+
+
+@app.route('/')
+def index():
+    if session.get('login'):
+        return redirect(url_for('home'))
+    return render_template('landing.html')
+
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if session.get('login'):
+        return redirect(url_for('home'))
+    if request.method == 'POST':
+        login = request.form.get('login', '').strip()
+        password = request.form.get('password', '')
+        password_repeat = request.form.get('password_repeat', '')
+        if not LOGIN_RE.fullmatch(login):
+            flash('Логин: от 3 до 24 символов — буквы, цифры, дефис или подчёркивание', 'error')
+        elif len(password) < 6:
+            flash('Пароль должен содержать минимум 6 символов', 'error')
+        elif password != password_repeat:
+            flash('Пароли не совпадают', 'error')
+        else:
+            with EXCEL_LOCK:
+                workbook = openpyxl.load_workbook(EXCEL_FILE)
+                accounts = ensure_accounts_sheet(workbook)
+                if configured_login(login) or login in workbook.sheetnames:
+                    workbook.close()
+                    flash('Такой логин уже занят', 'error')
+                else:
+                    sheet = workbook.create_sheet(login)
+                    sheet.append(BOOK_HEADERS)
+                    accounts.append([login, '', False])
+                    workbook.save(EXCEL_FILE)
+                    workbook.close()
+                    ACCOUNTS[login] = generate_password_hash(password)
+                    persist_accounts()
+                    session['login'] = login
+                    session['avatar'] = ''
+                    flash('Аккаунт создан. Добро пожаловать!', 'success')
+                    return redirect(url_for('home'))
+    return render_template('auth.html', mode='register')
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if session.get('login'):
+        return redirect(url_for('home'))
+    if request.method == 'POST':
+        login_value = request.form.get('login', '').strip()
+        password = request.form.get('password', '')
+        login_name = configured_login(login_value)
+        workbook = openpyxl.load_workbook(EXCEL_FILE, read_only=True)
+        account = find_account(workbook, login_name) if login_name else None
+        workbook.close()
+        if account and verify_account_password(login_name, password):
+            session['login'] = account['login']
+            session['avatar'] = account['avatar']
+            flash('Вы вошли в свою библиотеку', 'success')
+            return redirect(url_for('home'))
+        flash('Неверный логин или пароль', 'error')
+    return render_template('auth.html', mode='login')
+
+
+@app.route('/logout', methods=['POST'])
+@require_login
+def logout():
+    session.clear()
+    flash('Вы вышли из аккаунта', 'success')
+    return redirect(url_for('index'))
+
+
+@app.route('/home')
+@require_login
+def home():
+    workbook, sheet = get_current_library()
+    if sheet is None:
+        return redirect(url_for('login'))
+    books = books_from_sheet(sheet)
+    workbook.close()
+    return render_template('index.html', books_count=len(books), featured_books=[book for book in books if book['image_path']][:2])
+
+
+@app.route('/books')
+@require_login
+def books():
+    workbook, sheet = get_current_library()
+    if sheet is None:
+        return redirect(url_for('login'))
+    books_list = books_from_sheet(sheet)
+    workbook.close()
+    return render_template('books.html', books=books_list)
+
+
 @app.route('/books/<book_id>', methods=['GET', 'POST'])
+@require_login
 def book_journal(book_id):
-    if not session.get('password_ok'):
-        if request.method == 'POST':
-            password = request.form.get('password')
-            if password == ADD_BOOK_PASSWORD:
-                session['password_ok'] = True
-                flash('Пароль верный! Дневник книги открыт', 'success')
-                return redirect(url_for('book_journal', book_id=book_id))
-
-            flash('Неверный пароль!', 'error')
-
-        return render_template(
-            'password_check.html',
-            access_title='Доступ к читательскому дневнику',
-            access_heading='Открыть читательский дневник',
-            access_intro='Введите пароль владельца, чтобы просматривать и редактировать записи о книге.',
-            access_copy='После подтверждения откроется читательский дневник выбранной книги.',
-        )
-
     with EXCEL_LOCK:
-        workbook = openpyxl.load_workbook(EXCEL_FILE)
-        sheet = workbook.active
-
-        row_index = next(
-            (
-                row
-                for row in range(2, sheet.max_row + 1)
-                if str(sheet.cell(row=row, column=2).value or '') == str(book_id)
-            ),
-            None,
-        )
-
+        workbook, sheet = get_current_library()
+        if sheet is None:
+            return redirect(url_for('login'))
+        row_index = next((row for row in range(2, sheet.max_row + 1) if str(sheet.cell(row=row, column=2).value or '') == str(book_id)), None)
         if row_index is None:
             workbook.close()
-            flash('Книга не найдена', 'error')
+            flash('Книга не найдена в вашей библиотеке', 'error')
             return redirect(url_for('books'))
 
         if request.method == 'POST':
             book_name = request.form.get('name', '').strip()
             cover = request.files.get('cover')
-            cover_path = None
-
-            if cover and cover.filename:
-                try:
-                    cover_path = save_uploaded_cover(cover, book_id)
-                except ValueError as error:
-                    workbook.close()
-                    flash(str(error), 'error')
-                    return redirect(url_for('book_journal', book_id=book_id))
-
-            sheet.cell(row=row_index, column=JOURNAL_COLUMNS['name'], value=book_name)
-            sheet.cell(row=row_index, column=JOURNAL_COLUMNS['author'], value=request.form.get('author', '').strip())
-            sheet.cell(row=row_index, column=JOURNAL_COLUMNS['pages'], value=parse_non_negative_int(request.form.get('pages')))
-            sheet.cell(row=row_index, column=JOURNAL_COLUMNS['categories'], value=request.form.get('categories', '').strip())
-            sheet.cell(row=row_index, column=JOURNAL_COLUMNS['date_started'], value=parse_form_date(request.form.get('date_started')))
-            sheet.cell(row=row_index, column=JOURNAL_COLUMNS['date_finished'], value=parse_form_date(request.form.get('date_finished')))
-
+            try:
+                cover_path = save_uploaded_cover(cover, book_id) if cover and cover.filename else None
+            except ValueError as error:
+                workbook.close()
+                flash(str(error), 'error')
+                return redirect(url_for('book_journal', book_id=book_id))
+            sheet.cell(row=row_index, column=1, value=book_name)
+            sheet.cell(row=row_index, column=3, value=request.form.get('author', '').strip())
+            sheet.cell(row=row_index, column=5, value=parse_non_negative_int(request.form.get('pages')))
+            sheet.cell(row=row_index, column=7, value=request.form.get('categories', '').strip())
+            sheet.cell(row=row_index, column=11, value=parse_form_date(request.form.get('date_started')))
+            sheet.cell(row=row_index, column=12, value=parse_form_date(request.form.get('date_finished')))
             for field in ('journal_rating', 'romance', 'friendship', 'humor', 'heartbreak', 'plot', 'chemistry'):
                 sheet.cell(row=row_index, column=JOURNAL_COLUMNS[field], value=parse_score(request.form.get(field)))
-
-            sheet.cell(row=row_index, column=JOURNAL_COLUMNS['thoughts'], value=request.form.get('thoughts', '').strip())
-            sheet.cell(row=row_index, column=JOURNAL_COLUMNS['tropes'], value=request.form.get('tropes', '').strip())
+            sheet.cell(row=row_index, column=20, value=request.form.get('thoughts', '').strip())
+            sheet.cell(row=row_index, column=21, value=request.form.get('tropes', '').strip())
             if cover_path:
                 sheet.cell(row=row_index, column=9, value=cover_path)
-
             workbook.save(EXCEL_FILE)
             workbook.close()
             flash('Дневник книги сохранён', 'success')
             return redirect(url_for('books'))
 
-        journal = {
-            field: sheet.cell(row=row_index, column=column).value
-            for field, column in JOURNAL_COLUMNS.items()
-        }
+        journal = {field: sheet.cell(row=row_index, column=column).value for field, column in JOURNAL_COLUMNS.items()}
         journal['date_started'] = format_excel_date(journal['date_started'])
         journal['date_finished'] = format_excel_date(journal['date_finished'])
         journal['image_path'] = find_cover_image(book_id)
-
         workbook.close()
-
     return render_template('book_journal.html', book=journal, book_id=book_id)
 
-@app.route('/export_excel')
-def export_excel():
-    if os.path.exists(EXCEL_FILE):
-        return send_file(EXCEL_FILE, as_attachment=True, download_name='books.xlsx')
-    else:
-        flash('Файл не найден', 'error')
-        return redirect(url_for('index'))
 
-@app.route('/add_book', methods=['GET', 'POST'])
+@app.route('/add_book')
+@require_login
 def add_book():
-    if session.get('password_ok'):
-        return render_template('add_book.html')
-    
-    if request.method == 'POST':
-        password = request.form.get('password')
-        if password == ADD_BOOK_PASSWORD:
-            session['password_ok'] = True
-            flash('Пароль верный! Теперь можно добавлять книги', 'success')
-            return render_template('add_book.html')
-        else:
-            flash('Неверный пароль!', 'error')
-            return render_template('password_check.html')
-    
-    return render_template('password_check.html')
+    return render_template('add_book.html')
+
 
 @app.route('/add_book_manual', methods=['POST'])
+@require_login
 def add_book_manual():
-    if not session.get('password_ok'):
-        flash('Сначала подтвердите пароль владельца', 'error')
-        return redirect(url_for('add_book'))
-
     title = request.form.get('manual_title', '').strip()
     cover = request.files.get('manual_cover')
     if not title:
         flash('Укажите название книги', 'error')
         return redirect(url_for('add_book'))
-
-    cover_path = None
-    workbook = None
-    try:
-        with EXCEL_LOCK:
-            workbook = openpyxl.load_workbook(EXCEL_FILE)
-            sheet = workbook.active
-
-            existing_ids = {
-                str(sheet.cell(row=row, column=2).value or '')
-                for row in range(2, sheet.max_row + 1)
-            }
+    with EXCEL_LOCK:
+        workbook, sheet = get_current_library()
+        if sheet is None:
+            return redirect(url_for('login'))
+        existing_ids = {str(sheet.cell(row=row, column=2).value or '') for row in range(2, sheet.max_row + 1)}
+        book_id = make_manual_book_id(title)
+        while book_id in existing_ids:
             book_id = make_manual_book_id(title)
-            while book_id in existing_ids:
-                book_id = make_manual_book_id(title)
-
-            if cover and cover.filename:
-                cover_path = save_uploaded_cover(cover, book_id)
-
-            next_row = sheet.max_row + 1
-            sheet.cell(row=next_row, column=1, value=title)
-            sheet.cell(row=next_row, column=2, value=book_id)
-            sheet.cell(row=next_row, column=3, value='')
-            sheet.cell(row=next_row, column=4, value='')
-            sheet.cell(row=next_row, column=5, value='')
-            sheet.cell(row=next_row, column=6, value='')
-            sheet.cell(row=next_row, column=7, value='')
-            sheet.cell(row=next_row, column=8, value='web_user')
-            sheet.cell(row=next_row, column=9, value=cover_path or '')
-            sheet.cell(row=next_row, column=10, value='')
-            workbook.save(EXCEL_FILE)
-
-        flash(f"Книга '{title}' успешно добавлена!", 'success')
-        return redirect(url_for('books'))
-    except ValueError as error:
-        flash(str(error), 'error')
-    except Exception as error:
-        flash(f'Не удалось добавить книгу: {error}', 'error')
-    finally:
-        if workbook is not None:
+        try:
+            cover_path = save_uploaded_cover(cover, book_id) if cover and cover.filename else ''
+        except ValueError as error:
             workbook.close()
+            flash(str(error), 'error')
+            return redirect(url_for('add_book'))
+        sheet.append([title, book_id, '', '', '', '', '', session['login'], cover_path, ''])
+        workbook.save(EXCEL_FILE)
+        workbook.close()
+    flash(f"Книга '{title}' успешно добавлена!", 'success')
+    return redirect(url_for('books'))
 
-    if cover_path:
-        cover_file = os.path.join('static', cover_path)
-        if os.path.exists(cover_file):
-            os.remove(cover_file)
-    return redirect(url_for('add_book'))
 
 @app.route('/search_books', methods=['POST'])
+@require_login
 def search_books():
-    search_text = request.form.get('book_name')
-    if search_text:
-        search_url = f"https://www.googleapis.com/books/v1/volumes?q={search_text.replace(' ', '+')}&key={API_KEY}&langRestrict=ru&maxResults=20"
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        
-        try:
-            response = requests.get(search_url, headers=headers, timeout=10)
-            response.raise_for_status()
-            
-            data = response.json()
-            
-            # 🔧 ДОБАВЬТЕ ЭТУ ЧАСТЬ - ОБРАБОТКА РЕЗУЛЬТАТОВ
-            results = []
-            for item in data.get('items', []):
-                volume_info = item.get('volumeInfo', {})
-                title = volume_info.get('title', 'Без названия')
-                book_id = item.get('id')
-                authors = ', '.join(volume_info.get('authors', ['Автор не указан']))
-                
-                # Получаем обложку
-                image_links = volume_info.get('imageLinks', {})
-                thumbnail_url = image_links.get('thumbnail', '')
-                
-                # Год издания
-                published_date = volume_info.get('publishedDate', '')
-                year = published_date[:4] if published_date else ''
-                
-                results.append({
-                    'name': title,
-                    'id': book_id,
-                    'authors': authors,
-                    'year': year,
-                    'cover_url': thumbnail_url
-                })
-            
-            return render_template('search_results.html', results=results, search_text=search_text)
-            # КОНЕЦ ДОБАВЛЕННОЙ ЧАСТИ
-            
-        except requests.exceptions.Timeout:
-            flash('Превышено время ожидания ответа от Google Books API', 'error')
-        except requests.exceptions.ConnectionError:
-            flash('Ошибка подключения к Google Books API. Проверьте интернет.', 'error')
-        except requests.exceptions.HTTPError as e:
-            flash(f'Ошибка HTTP: {e}. API может быть временно недоступен.', 'error')
-        except Exception as e:
-            flash(f'Неизвестная ошибка: {str(e)}', 'error')
-            
+    search_text = request.form.get('book_name', '').strip()
+    if not search_text:
         return redirect(url_for('add_book'))
-    
-    return redirect(url_for('add_book'))
+    try:
+        response = requests.get(
+            'https://www.googleapis.com/books/v1/volumes',
+            params={'q': search_text, 'key': API_KEY, 'langRestrict': 'ru', 'maxResults': 20},
+            headers={'User-Agent': 'Mozilla/5.0'}, timeout=10,
+        )
+        response.raise_for_status()
+        results = []
+        for item in response.json().get('items', []):
+            info = item.get('volumeInfo', {})
+            results.append({
+                'name': info.get('title', 'Без названия'),
+                'id': item.get('id'),
+                'authors': ', '.join(info.get('authors', ['Автор не указан'])),
+                'year': (info.get('publishedDate') or '')[:4],
+                'cover_url': (info.get('imageLinks') or {}).get('thumbnail', ''),
+            })
+        return render_template('search_results.html', results=results, search_text=search_text)
+    except requests.RequestException:
+        flash('Не удалось получить данные из Google Books', 'error')
+        return redirect(url_for('add_book'))
+
 
 @app.route('/add_book_by_id', methods=['POST'])
+@require_login
 def add_book_by_id():
-    book_id = request.form.get('book_id')
-    
+    book_id = request.form.get('book_id', '').strip()
     if not book_id:
-        flash('Пожалуйста, введите корректный ID книги', 'error')
+        flash('Укажите Google Books ID', 'error')
         return redirect(url_for('add_book'))
-    
-    # Получаем данные о книге из Google Books API
-    book_url = f"https://www.googleapis.com/books/v1/volumes/{book_id}"
-    
-    params = {'key': API_KEY}
-    
     try:
-        response = requests.get(book_url, params=params, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            volume_info = data.get('volumeInfo', {})
-            
-            title = volume_info.get('title', 'Без названия')
-            authors = ', '.join(volume_info.get('authors', ['Автор не указан']))
-            published_date = volume_info.get('publishedDate', '')
-            year = published_date[:4] if published_date else ''
-            page_count = volume_info.get('pageCount', '')
-            rating = volume_info.get('averageRating', '')
-            categories = '; '.join(volume_info.get('categories', []))
-            
-            # Получаем обложку
-            image_links = volume_info.get('imageLinks', {})
-            image_url = image_links.get('medium') or image_links.get('thumbnail')
-            
-            # Открываем Excel файл один раз
-            workbook = openpyxl.load_workbook(EXCEL_FILE)
-            sheet = workbook.active
-            
-            next_row = sheet.max_row + 1
-            
-            # Добавляем все данные
-            sheet.cell(row=next_row, column=1, value=title)
-            sheet.cell(row=next_row, column=2, value=book_id)
-            sheet.cell(row=next_row, column=3, value=authors)
-            sheet.cell(row=next_row, column=4, value=year)
-            sheet.cell(row=next_row, column=5, value=page_count)
-            sheet.cell(row=next_row, column=6, value=rating)
-            sheet.cell(row=next_row, column=7, value=categories)
-            sheet.cell(row=next_row, column=8, value='web_user')
-            sheet.cell(row=next_row, column=9, value='')  # Картинка
-            sheet.cell(row=next_row, column=10, value='')  # Избранное
-            
-            # Добавляем картинку если есть
-            if image_url:
-                try:
-                    image_path = download_and_insert_image(sheet, next_row, image_url, book_id)
-                    if image_path:
-                        sheet.cell(row=next_row, column=9, value=image_path)
-                except Exception as img_error:
-                    print(f"Ошибка картинки: {img_error}")
-                    # Продолжаем, даже если картинка не добавилась
-            
-            # Сохраняем файл только один раз в конце
-            workbook.save(EXCEL_FILE)
-            
-            flash(f"Книга '{title}' успешно добавлена!", 'success')
-            return redirect(url_for('books'))
-        else:
-            flash(f'Ошибка API: статус {response.status_code}', 'error')
-            
-    except Exception as e:
-        flash(f'Ошибка: {str(e)}', 'error')
-        print(f"Детали: {e}")
-        
-    return redirect(url_for('add_book'))
+        response = requests.get(f'https://www.googleapis.com/books/v1/volumes/{book_id}', params={'key': API_KEY}, timeout=10)
+        response.raise_for_status()
+        info = response.json().get('volumeInfo', {})
+    except requests.RequestException:
+        flash('Не удалось получить книгу из Google Books', 'error')
+        return redirect(url_for('add_book'))
 
-@app.route('/toggle_favorite', methods=['POST'])
-def toggle_favorite():
-    data = request.get_json()
-    book_name = data.get('book_name')
-    favorite_value = data.get('favorite')
-    
-    if not book_name:
-        return jsonify({'success': False, 'error': 'Не указана книга'}), 400
-    
-    workbook = openpyxl.load_workbook(EXCEL_FILE)
-    sheet = workbook.active
-    
-    found = False
-    for row_idx in range(2, sheet.max_row + 1):
-        if sheet.cell(row=row_idx, column=1).value == book_name:
-            current_value = sheet.cell(row=row_idx, column=10).value or ''
-            
-            if favorite_value is None:
-                new_value = 'нет' if current_value == 'да' else 'да'
-            else:
-                new_value = favorite_value
-            
-            sheet.cell(row=row_idx, column=10, value=new_value)
-            found = True
-            break
-    
-    if found:
+    with EXCEL_LOCK:
+        workbook, sheet = get_current_library()
+        if sheet is None:
+            return redirect(url_for('login'))
+        if any(str(sheet.cell(row=row, column=2).value or '') == book_id for row in range(2, sheet.max_row + 1)):
+            workbook.close()
+            flash('Эта книга уже есть в вашей библиотеке', 'error')
+            return redirect(url_for('books'))
+        next_row = sheet.max_row + 1
+        title = info.get('title', 'Без названия')
+        sheet.append([
+            title, book_id, ', '.join(info.get('authors', ['Автор не указан'])),
+            (info.get('publishedDate') or '')[:4], info.get('pageCount', ''),
+            info.get('averageRating', ''), '; '.join(info.get('categories', [])),
+            session['login'], '', '',
+        ])
+        image_url = (info.get('imageLinks') or {}).get('medium') or (info.get('imageLinks') or {}).get('thumbnail')
+        if image_url:
+            image_path = download_and_insert_image(sheet, next_row, image_url, book_id)
+            if image_path:
+                sheet.cell(row=next_row, column=9, value=image_path)
         workbook.save(EXCEL_FILE)
-        return jsonify({'success': True, 'favorite': new_value})
-    else:
-        return jsonify({'success': False, 'error': 'Книга не найдена'}), 404
+        workbook.close()
+    flash(f"Книга '{title}' успешно добавлена!", 'success')
+    return redirect(url_for('books'))
+
 
 @app.route('/filter')
+@require_login
 def filter_books():
     return render_template('filter.html')
 
+
 @app.route('/filter/author', methods=['GET', 'POST'])
+@require_login
 def filter_by_author():
-    authors = get_all_authors()  # Получаем список авторов из Excel
-    
+    workbook, sheet = get_current_library()
+    if sheet is None:
+        return redirect(url_for('login'))
+    authors = authors_from_sheet(sheet)
     if request.method == 'POST':
-        author = request.form.get('author')
-        if author:
-            workbook = openpyxl.load_workbook(EXCEL_FILE)
-            sheet = workbook.active
-            
-            matching_books = []
-            for row in sheet.iter_rows(min_row=2, values_only=True):
-                if row[2]:  # колонка с авторами
-                    book_authors = row[2].split(',')
-                    for book_author in book_authors:
-                        if author.lower() in book_author.strip().lower():
-                            matching_books.append(row[0])
-                            break
-            
-            return render_template('filter_results.html', games=matching_books, 
-                                 filter_text=f"по автору '{author}'")
-    
+        author = request.form.get('author', '')
+        matches = [row[2] for row in sheet.iter_rows(min_row=2, values_only=True) if row[2] and author.casefold() in str(row[2]).casefold()]
+        workbook.close()
+        return render_template('filter_results.html', games=matches, filter_text=f"по автору '{author}'")
+    workbook.close()
     return render_template('filter_author.html', authors=authors)
 
+
 @app.route('/filter/category', methods=['GET', 'POST'])
+@require_login
 def filter_by_category():
-    categories = get_all_categories()
-    
+    workbook, sheet = get_current_library()
+    if sheet is None:
+        return redirect(url_for('login'))
+    categories = categories_from_sheet(sheet)
     if request.method == 'POST':
-        category = request.form.get('category')
-        if category:
-            workbook = openpyxl.load_workbook(EXCEL_FILE)
-            sheet = workbook.active
-            
-            matching_books = []
-            for row in sheet.iter_rows(min_row=2, values_only=True):
-                if row[6]:  # колонка с жанрами
-                    book_categories = row[6].split("; ")
-                    if category in book_categories:
-                        matching_books.append(row[0])  # название книги
-            
-            return render_template('filter_results.html', games=matching_books, 
-                                 filter_text=f"в жанре '{category}'")
-    
+        category = request.form.get('category', '')
+        matches = [row[0] for row in sheet.iter_rows(min_row=2, values_only=True) if row[6] and category in str(row[6]).split(';')]
+        workbook.close()
+        return render_template('filter_results.html', games=matches, filter_text=f"в жанре '{category}'")
+    workbook.close()
     return render_template('filter_category.html', categories=categories)
+
+
+@app.route('/export_excel')
+@require_login
+def export_excel():
+    workbook, sheet = get_current_library()
+    if sheet is None:
+        return redirect(url_for('login'))
+    export = Workbook()
+    export_sheet = export.active
+    export_sheet.title = session['login']
+    for row in sheet.iter_rows(values_only=True):
+        export_sheet.append(list(row))
+    workbook.close()
+    output = BytesIO()
+    export.save(output)
+    output.seek(0)
+    return send_file(output, as_attachment=True, download_name=f"{session['login']}_books.xlsx")
+
+
+@app.route('/settings', methods=['GET', 'POST'])
+@require_login
+def settings():
+    with EXCEL_LOCK:
+        workbook = openpyxl.load_workbook(EXCEL_FILE)
+        account = find_account(workbook, session['login'])
+        if not account:
+            workbook.close()
+            session.clear()
+            return redirect(url_for('login'))
+        if request.method == 'POST':
+            accounts = workbook[ACCOUNTS_SHEET]
+            row_number = next(row for row in range(2, accounts.max_row + 1) if str(accounts.cell(row=row, column=1).value).casefold() == account['login'].casefold())
+            new_password = request.form.get('new_password', '')
+            password_repeat = request.form.get('password_repeat', '')
+            if new_password and (len(new_password) < 6 or new_password != password_repeat):
+                workbook.close()
+                flash('Новый пароль должен содержать минимум 6 символов, и поля должны совпадать', 'error')
+                return redirect(url_for('settings'))
+            try:
+                avatar = request.files.get('avatar')
+                avatar_path = save_uploaded_avatar(avatar, account['login']) if avatar and avatar.filename else account['avatar']
+            except ValueError as error:
+                workbook.close()
+                flash(str(error), 'error')
+                return redirect(url_for('settings'))
+            accounts.cell(row=row_number, column=2, value=avatar_path)
+            accounts.cell(row=row_number, column=3, value='да' if request.form.get('is_public') else 'нет')
+            if new_password:
+                ACCOUNTS[account['login']] = generate_password_hash(new_password)
+            workbook.save(EXCEL_FILE)
+            workbook.close()
+            if new_password:
+                persist_accounts()
+            session['avatar'] = avatar_path
+            flash('Настройки сохранены', 'success')
+            return redirect(url_for('settings'))
+        workbook.close()
+    return render_template('settings.html', account=account)
+
+
+@app.route('/libraries')
+def public_libraries():
+    workbook = openpyxl.load_workbook(EXCEL_FILE, read_only=True)
+    libraries = []
+    if ACCOUNTS_SHEET in workbook.sheetnames:
+        for row in workbook[ACCOUNTS_SHEET].iter_rows(min_row=2, values_only=True):
+            if row[0] and configured_login(str(row[0])) and str(row[2]).lower() in ('1', 'true', 'да', 'yes'):
+                libraries.append({'login': row[0], 'avatar': row[1] or ''})
+    workbook.close()
+    return render_template('public_libraries.html', libraries=libraries)
+
+
+@app.route('/libraries/<login>')
+def public_library(login):
+    workbook = openpyxl.load_workbook(EXCEL_FILE, read_only=True)
+    account = find_account(workbook, login)
+    if not account or not account['is_public'] or account['login'] not in workbook.sheetnames:
+        workbook.close()
+        flash('Эта библиотека скрыта или не найдена', 'error')
+        return redirect(url_for('public_libraries'))
+    books_list = books_from_sheet(workbook[account['login']])
+    workbook.close()
+    return render_template('public_books.html', books=books_list, owner=account)
+
+
+@app.route('/toggle_favorite', methods=['POST'])
+@require_login
+def toggle_favorite():
+    data = request.get_json(silent=True) or {}
+    book_id = data.get('book_id')
+    if not book_id:
+        return jsonify({'success': False, 'error': 'Не указан ID книги'}), 400
+    with EXCEL_LOCK:
+        workbook, sheet = get_current_library()
+        if sheet is None:
+            return jsonify({'success': False, 'error': 'Требуется вход'}), 401
+        for row in range(2, sheet.max_row + 1):
+            if str(sheet.cell(row=row, column=2).value or '') == str(book_id):
+                current = str(sheet.cell(row=row, column=10).value or '').lower()
+                value = 'нет' if current == 'да' else 'да'
+                sheet.cell(row=row, column=10, value=value)
+                workbook.save(EXCEL_FILE)
+                workbook.close()
+                return jsonify({'success': True, 'favorite': value})
+        workbook.close()
+    return jsonify({'success': False, 'error': 'Книга не найдена'}), 404
+
 
 @app.route('/static/<path:filename>')
 def serve_static(filename):
     return send_from_directory('static', filename)
 
+
 if __name__ == '__main__':
-    app.run(
-        host='0.0.0.0', 
-        port=5001,  # Другой порт, чтобы не конфликтовать с сайтом настолок
-        debug=True
-    )
+    app.run(host='0.0.0.0', port=5001, debug=True)

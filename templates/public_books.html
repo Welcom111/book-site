@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Библиотека {{ owner.login }}{% endblock %}
+{% block header %}
+<div class="page-heading">
+  <p class="eyebrow">Публичная библиотека</p>
+  <h1>Книги {{ owner.login }}</h1>
+  <p>Эта коллекция открыта владельцем для просмотра.</p>
+</div>
+{% endblock %}
+{% block content %}
+<section class="books-grid">
+  {% for book in books %}
+  <article class="book-card">
+    <div class="cover">{% if book.image_path %}<img src="{{ url_for('static', filename=book.image_path) }}" alt="Обложка книги «{{ book.name }}»">{% else %}<div class="cover-placeholder">▤</div>{% endif %}</div>
+    <div class="book-body"><h2 class="book-title">{{ book.name }}</h2><p class="book-author">{{ book.author or 'Автор не указан' }}</p>{% if book.categories %}<div class="tags">{% for category in book.categories.split(';')[:3] %}<span class="tag">{{ category.strip() }}</span>{% endfor %}</div>{% endif %}</div>
+  </article>
+  {% endfor %}
+</section>
+{% if not books %}<div class="empty"><span class="empty-icon">▤</span>В библиотеке пока нет книг.</div>{% endif %}
+<div class="button-row"><a class="button button-ghost" href="{{ url_for('public_libraries') }}">← Все публичные библиотеки</a></div>
+{% endblock %}
