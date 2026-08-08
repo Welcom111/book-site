@@ -73,17 +73,15 @@ def init_excel():
 
 init_excel()
 
-def make_cover_filename(book_name, book_id, extension='jpg'):
-    """Формирует единое имя обложки: название_книги_ID.расширение."""
-    safe_name = re.sub(r'[\\/*?:"<>|\.]', '_', str(book_name or ''))
-    safe_name = re.sub(r'\s+', '_', safe_name)
+def make_cover_filename(book_id, extension='jpg'):
+    """Формирует стабильное имя обложки только по ID книги."""
     safe_id = re.sub(r'[\\/*?:"<>|\.\s]', '_', str(book_id or ''))
-    return f'{safe_name}_{safe_id}.{extension}'
+    return f'{safe_id}.{extension}'
 
-def find_cover_image(book_name, book_id):
-    """Возвращает web-путь обложки, имя которой соответствует книге и её ID."""
+def find_cover_image(book_id):
+    """Возвращает web-путь обложки, имя которой соответствует ID книги."""
     for extension in ('jpg', 'jpeg', 'png', 'webp'):
-        filename = make_cover_filename(book_name, book_id, extension)
+        filename = make_cover_filename(book_id, extension)
         image_path = os.path.join('static', 'images', filename)
         if os.path.exists(image_path):
             return f'images/{filename}'
@@ -95,7 +93,7 @@ def make_manual_book_id(book_name):
     name_hash = hashlib.sha256(normalized_name.encode('utf-8')).hexdigest()[:8]
     return f'manual-{name_hash}-{secrets.token_hex(3)}'
 
-def save_uploaded_cover(uploaded_file, book_name, book_id):
+def save_uploaded_cover(uploaded_file, book_id):
     """Проверяет пользовательскую обложку и сохраняет её в общем формате JPEG."""
     if not uploaded_file or not uploaded_file.filename:
         return None
@@ -127,11 +125,11 @@ def save_uploaded_cover(uploaded_file, book_name, book_id):
 
     static_img_dir = 'static/images'
     os.makedirs(static_img_dir, exist_ok=True)
-    filename = make_cover_filename(book_name, book_id)
+    filename = make_cover_filename(book_id)
     image.save(os.path.join(static_img_dir, filename), 'JPEG', quality=95, optimize=True)
     return f'images/{filename}'
 
-def download_and_insert_image(sheet, row_num, image_url, book_name, book_id):
+def download_and_insert_image(sheet, row_num, image_url, book_id):
     """Скачивает картинку обложки и вставляет в Excel"""
     try:
         from PIL import Image as PILImage
@@ -141,7 +139,7 @@ def download_and_insert_image(sheet, row_num, image_url, book_name, book_id):
         if not os.path.exists(static_img_dir):
             os.makedirs(static_img_dir)
         
-        img_filename = make_cover_filename(book_name, book_id)
+        img_filename = make_cover_filename(book_id)
         img_path = os.path.join(static_img_dir, img_filename)
         
         session_req = requests.Session()
@@ -220,7 +218,7 @@ def index():
 
         books_count += 1
         book_id = row[1]
-        image_path = find_cover_image(name, book_id)
+        image_path = find_cover_image(book_id)
         if image_path and len(featured_books) < 2:
             featured_books.append({
                 'name': name,
@@ -252,7 +250,7 @@ def books():
             added_by = sheet.cell(row=row_idx, column=8).value
             favorite = sheet.cell(row=row_idx, column=10).value
             
-            image_filename = find_cover_image(name, book_id)
+            image_filename = find_cover_image(book_id)
             
             books_list.append({
                 'row_index': row_idx,
@@ -341,7 +339,19 @@ def book_journal(book_id):
             return redirect(url_for('books'))
 
         if request.method == 'POST':
-            sheet.cell(row=row_index, column=JOURNAL_COLUMNS['name'], value=request.form.get('name', '').strip())
+            book_name = request.form.get('name', '').strip()
+            cover = request.files.get('cover')
+            cover_path = None
+
+            if cover and cover.filename:
+                try:
+                    cover_path = save_uploaded_cover(cover, book_id)
+                except ValueError as error:
+                    workbook.close()
+                    flash(str(error), 'error')
+                    return redirect(url_for('book_journal', book_id=book_id))
+
+            sheet.cell(row=row_index, column=JOURNAL_COLUMNS['name'], value=book_name)
             sheet.cell(row=row_index, column=JOURNAL_COLUMNS['author'], value=request.form.get('author', '').strip())
             sheet.cell(row=row_index, column=JOURNAL_COLUMNS['pages'], value=parse_non_negative_int(request.form.get('pages')))
             sheet.cell(row=row_index, column=JOURNAL_COLUMNS['categories'], value=request.form.get('categories', '').strip())
@@ -353,6 +363,8 @@ def book_journal(book_id):
 
             sheet.cell(row=row_index, column=JOURNAL_COLUMNS['thoughts'], value=request.form.get('thoughts', '').strip())
             sheet.cell(row=row_index, column=JOURNAL_COLUMNS['tropes'], value=request.form.get('tropes', '').strip())
+            if cover_path:
+                sheet.cell(row=row_index, column=9, value=cover_path)
 
             workbook.save(EXCEL_FILE)
             workbook.close()
@@ -365,7 +377,7 @@ def book_journal(book_id):
         }
         journal['date_started'] = format_excel_date(journal['date_started'])
         journal['date_finished'] = format_excel_date(journal['date_finished'])
-        journal['image_path'] = find_cover_image(journal['name'], book_id)
+        journal['image_path'] = find_cover_image(book_id)
 
         workbook.close()
 
@@ -424,7 +436,7 @@ def add_book_manual():
                 book_id = make_manual_book_id(title)
 
             if cover and cover.filename:
-                cover_path = save_uploaded_cover(cover, title, book_id)
+                cover_path = save_uploaded_cover(cover, book_id)
 
             next_row = sheet.max_row + 1
             sheet.cell(row=next_row, column=1, value=title)
@@ -564,7 +576,9 @@ def add_book_by_id():
             # Добавляем картинку если есть
             if image_url:
                 try:
-                    download_and_insert_image(sheet, next_row, image_url, title, book_id)
+                    image_path = download_and_insert_image(sheet, next_row, image_url, book_id)
+                    if image_path:
+                        sheet.cell(row=next_row, column=9, value=image_path)
                 except Exception as img_error:
                     print(f"Ошибка картинки: {img_error}")
                     # Продолжаем, даже если картинка не добавилась

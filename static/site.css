@@ -322,7 +322,7 @@ a { color: inherit; }
   grid-template-columns: minmax(220px, .8fr) minmax(320px, 1.2fr);
   gap: clamp(28px, 5vw, 65px);
 }
-.journal-cover-panel { display: grid; gap: 22px; }
+.journal-cover-panel { display: grid; align-content: start; gap: 12px; }
 .journal-cover {
   display: grid;
   place-items: center;
@@ -334,6 +334,9 @@ a { color: inherit; }
 .journal-cover img { width: 100%; height: 100%; object-fit: cover; }
 .journal-cover span { color: #988c7a; font-size: 60px; }
 .journal-cover small { margin-top: -45%; color: #8f8373; }
+.cover-change-button { width: 100%; cursor: pointer; }
+.cover-file-input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.cover-file-name { min-height: 18px; margin: 0; color: #807565; font-size: 12px; line-height: 1.4; text-align: center; overflow-wrap: anywhere; }
 .rating-fieldset { margin: 0; padding: 12px 16px 16px; border: 1px solid #b9ad9b; }
 .rating-fieldset legend { padding: 0 8px; font-weight: 700; }
 .star-rating { display: inline-flex; flex-direction: row-reverse; justify-content: flex-end; }

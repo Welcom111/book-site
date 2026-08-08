@@ -8,7 +8,7 @@
 </div>
 {% endblock %}
 {% block content %}
-<form class="journal-sheet" method="POST">
+<form class="journal-sheet" method="POST" enctype="multipart/form-data">
   <div class="journal-top">
     <section class="journal-cover-panel">
       <div class="journal-cover">
@@ -19,15 +19,9 @@
         <small>Обложка книги</small>
         {% endif %}
       </div>
-      <fieldset class="rating-fieldset">
-        <legend>Моя оценка</legend>
-        <div class="star-rating" aria-label="Оценка книги от 1 до 5">
-          {% for score in range(5, 0, -1) %}
-          <input type="radio" id="rating-{{ score }}" name="journal_rating" value="{{ score }}" {% if book.journal_rating|int == score %}checked{% endif %}>
-          <label for="rating-{{ score }}" title="{{ score }} из 5">★</label>
-          {% endfor %}
-        </div>
-      </fieldset>
+      <label class="button button-ghost cover-change-button" for="cover">Изменить обложку</label>
+      <input class="cover-file-input" id="cover" name="cover" type="file" accept="image/jpeg,image/png,image/webp">
+      <p class="cover-file-name" id="cover-file-name">JPG, PNG или WebP, до 8 МБ</p>
     </section>
 
     <section class="journal-details">
@@ -57,6 +51,15 @@
           <input id="date_finished" name="date_finished" type="date" value="{{ book.date_finished }}">
         </div>
       </div>
+      <fieldset class="rating-fieldset">
+        <legend>Моя оценка</legend>
+        <div class="star-rating" aria-label="Оценка книги от 1 до 5">
+          {% for score in range(5, 0, -1) %}
+          <input type="radio" id="rating-{{ score }}" name="journal_rating" value="{{ score }}" {% if book.journal_rating|int == score %}checked{% endif %}>
+          <label for="rating-{{ score }}" title="{{ score }} из 5">★</label>
+          {% endfor %}
+        </div>
+      </fieldset>
     </section>
   </div>
 
@@ -100,4 +103,15 @@
     <button class="button button-primary" type="submit">Сохранить дневник</button>
   </div>
 </form>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const cover = document.getElementById('cover');
+  const fileName = document.getElementById('cover-file-name');
+  cover.addEventListener('change', () => {
+    fileName.textContent = cover.files[0] ? cover.files[0].name : 'JPG, PNG или WebP, до 8 МБ';
+  });
+})();
+</script>
 {% endblock %}

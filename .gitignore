@@ -4,3 +4,8 @@ local_config.py
 # Python
 __pycache__/
 *.py[cod]
+
+
+static/images
+
+books.xlsx
