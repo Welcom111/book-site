@@ -1,7 +1,7 @@
 :root {
   --ink: #172033;
   --muted: #687086;
-  --paper: #fc7e7e;
+  --paper: #f9abc3;
   --paper-deep: #efe9de;
   --surface: rgba(255, 255, 255, .94);
   --line: #e5ded2;
@@ -20,10 +20,7 @@ body {
   margin: 0;
   min-height: 100vh;
   color: var(--ink);
-  background:
-    radial-gradient(circle at 8% 4%, rgba(233, 95, 61, .14), transparent 25rem),
-    radial-gradient(circle at 95% 16%, rgba(243, 184, 63, .12), transparent 22rem),
-    var(--paper);
+  background: url("images/lower-bats.png") center top / 100% auto repeat-y, var(--paper);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 button, input, select { font: inherit; }
